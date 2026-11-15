@@ -1,0 +1,244 @@
+# Kizami design
+
+Status: Step 1 (evaluation tools and design). Decisions in this document were
+made on 2026-11-15. Items marked **unverified** are assumptions that Step 2
+must test with measurements.
+
+## 1. Purpose
+
+Kizami makes timed lyrics for Japanese songs. Each piece of lyric text (a
+*chunk*) lights up at the moment the singer starts to sing it. The effect
+should feel like a rhythm game played by the vocal line.
+
+Existing automatic tools have two problems:
+
+- Timing made for speech drifts by about 200 to 500 ms when the voice is
+  mixed with instruments.
+- Japanese text is split mechanically, for example `夜 / 空を / 駆 / ける`,
+  which breaks words in the middle.
+
+## 2. Goals, non-goals, anti-goals
+
+**Goals (MVP)**
+
+- Input: one lyrics text file and one mixed audio file.
+- Output: Kizami timing JSON (master data) and TTML. LRC and ASS on request
+  (`--format lrc,ass`).
+- Recall of 85% or more and precision of 80% or more at ±50 ms (section 5).
+- Manual correction of 5 minutes or less for a 4-minute song.
+- 1 to 3 minutes of processing for a 4-minute song on an Apple Silicon Mac.
+- Singer parts (`ttm:agent`) from tags written in the lyrics file.
+- Reading overrides for words that are sung with a non-standard reading.
+
+**Non-goals (MVP)**
+
+- Korean. English and other space-separated text gets word-level timing only.
+- Transcribing lyrics from audio.
+- Detecting which singer sings a line.
+- Fast rap and dense harmonies.
+- A graphical editor. Corrections are made in existing TTML editors.
+- Video export.
+
+**Anti-goals** (these make the tool a failure even if it runs)
+
+- Splitting inside a word or compound such as `夜空`.
+- Raising one score by gaming the other: many small chunks, or very few.
+- Storing, downloading, or distributing lyrics or audio. Kizami only reads
+  files that the user already has on the local machine.
+
+## 3. Terms
+
+| Term | Meaning |
+|---|---|
+| Attack | The first audible sound of a chunk, **including the consonant**. For `さ` it is the start of the `s` noise, not the start of the vowel. |
+| Chunk | Lyric text that lights up as one unit. It starts at a morpheme boundary and is never shorter than one morpheme. |
+| Boundary | The start of a chunk: a position in the lyric text plus a time. |
+| Reference | Timing made by a person. It is the ground truth. |
+| Generated | Timing made by Kizami. |
+
+A long note (melisma, vibrato) is not split. It is one chunk from its attack
+to the end of the sustained sound.
+
+### Why the consonant start
+
+If text lights up at the vowel, the display looks late for sounds with a long
+consonant (`s`, `sh`, `ts`, `h`). This has a cost. Acoustic onset detectors
+react to the fast energy rise, which is usually near the vowel. For a long
+consonant the two points can be 50 to 150 ms apart (**unverified** estimate
+from general phonetics), which is more than the ±50 ms tolerance. Step 2 must
+measure this. See section 8.
+
+## 4. Approaches considered
+
+| | Approach | Trade-off |
+|---|---|---|
+| A | **Forced alignment, then snap to onsets.** A speech model places each mora roughly. Each candidate boundary then moves to the nearest strong onset in the vocal track. | Needs an alignment model that tolerates singing. Two stages to tune. Uses the known lyrics fully. **Chosen as first candidate.** |
+| B | Onsets first. Detect all onsets, then assign morphemes to onsets with dynamic programming and mora counts. | No acoustic model of the text. One missed or extra onset shifts everything after it. |
+| C | Speech recognizer word timestamps (Whisper family), then correct. | This is the method that already drifts by 200 to 500 ms. Its timestamps are a by-product, not a design target. |
+
+Approach A is a hypothesis. Step 2 compares two or three concrete variants
+on the reference data and keeps the one that measures best.
+
+## 5. Evaluation
+
+Evaluation comes first because parameter tuning without a measurement goes
+in circles.
+
+### 5.1 Metric
+
+A **hit** is a reference boundary and a generated boundary that are at the
+same text position and no more than 50 ms apart.
+
+- **Recall** = hits / reference boundaries. Target: 85% or more.
+- **Precision** = hits / generated boundaries inside the reference excerpt.
+  Target: 80% or more.
+
+Both must pass. Recall alone rewards splitting everywhere. Precision alone
+rewards splitting almost nowhere.
+
+Design calls made here:
+
+- *Same text position is required.* A generated boundary at the right time
+  but in front of the wrong text would light up the wrong word, so it is not
+  a hit. This is stricter than matching by time only. The reported scores
+  can only be lower than time-only scores, never higher.
+- *Positions use normalized text* (NFKC, case folding, letters and digits
+  only). Spacing, punctuation, and character width do not affect matching.
+- *The reference can be an excerpt.* Kizami runs on the full song. The
+  evaluation finds the excerpt in the generated file by its text. If the
+  text repeats (a chorus sung three times), it uses the occurrence nearest
+  in time.
+- *Tolerance is inclusive.* A difference of exactly 50 ms is a hit.
+
+The evaluation also reports, for diagnosis only:
+
+- Signed timing error (generated minus reference) at shared positions:
+  median, mean, median absolute, 90th percentile absolute. The median is
+  the direct estimate for a global offset correction.
+- Counts of missing splits, extra splits, too-late and too-early boundaries.
+- Recall without the boundaries that the labeller marked as uncertain.
+- 95% confidence intervals (Wilson score).
+- End-time checks: missing end, zero or negative length, overlaps inside a
+  line. End times are not a pass criterion.
+
+### 5.2 Reference data
+
+- Made by hand in Audacity on the separated vocal track, by looking at the
+  waveform and spectrogram. Tapping in real time is not precise enough for a
+  ±50 ms tolerance. The procedure is in [labeling-guide.md](labeling-guide.md).
+- File format: [timing-json-format.md](timing-json-format.md).
+- First set: the chorus (30 to 45 s) of 3 songs with different tempos, used
+  for tuning, plus 1 more song that is **held out**. The held-out song is
+  never used to choose a method or a parameter. It is evaluated only when a
+  version is declared finished.
+- Reference files contain lyric text. They stay on the local machine in
+  `eval/data/`, which Git ignores.
+
+### 5.3 Limits of the measurement
+
+- **Label noise.** The labeller relabels one chorus on another day and
+  compares the two passes with the same tool. If the two passes agree on
+  fewer than about 95% of boundaries, the 85% target cannot be measured
+  reliably, and the procedure or the tolerance must change first.
+- **Sample size.** Three choruses give an estimated 60 to 120 boundaries.
+  At 100 boundaries, a measured 85% has a 95% interval of about 77% to 91%.
+  This shows direction but cannot separate 85% from 80%. More data is added
+  in Step 3.
+- **Anchoring.** Reference timing must not be made by correcting Kizami
+  output. That would pull the reference toward the tool.
+- **Section bias.** Choruses often have doubled vocals and harmonies. Verses
+  may behave differently. Step 3 adds verse sections.
+
+## 6. Core pipeline (planned)
+
+```
+lyrics.txt ──► parse ──► morphemes + readings ──┐
+                                               ├─► forced alignment ─► rough time per morpheme
+audio ──► vocal separation ──► vocal track ────┤
+                                               └─► onset detection ──► onset times + strengths
+                                                                │
+        rough times + onsets ──► snap and merge ──► chunks ──► end times ──► timing JSON ──► TTML / LRC / ASS
+```
+
+1. **Parse lyrics.** Lines, singer tags, reading overrides (section 7).
+2. **Morphological analysis.** Split each line into morphemes. Morpheme
+   starts are the only places where a chunk may start. A reading in kana is
+   attached to each morpheme. A text with a reading override is one unit.
+3. **Vocal separation.** `demucs` on the mixed audio.
+4. **Forced alignment.** Align the kana sequence to the vocal track. Result:
+   a rough start time for each morpheme.
+5. **Onset detection.** An onset strength curve on the vocal track, and its
+   peaks.
+6. **Snap and merge.** For each morpheme start, look for the strongest onset
+   inside a search window around the rough time.
+   - Strong onset found: the morpheme starts a chunk at the onset time plus
+     an offset correction.
+   - No strong onset: the morpheme joins the previous chunk. This is how
+     `を` after `夜空` stays inside `夜空を` when the singer does not
+     re-attack.
+   - The first morpheme of a line always starts a chunk.
+   - A chunk shorter than a minimum duration joins its neighbour.
+7. **End times.** A chunk ends where the voice stops, or where the next
+   chunk of the same line starts, whichever is earlier.
+8. **Write output.** Timing JSON first. Other formats are converted from it.
+
+Tunable parameters (starting values are set in Step 2 from measurements):
+search window before and after the rough time, onset strength threshold,
+offset correction, minimum chunk duration.
+
+## 7. Lyrics input syntax (planned, implemented in Step 3)
+
+```
+[ボーカルA]
+あの宇宙{そら}を見上げて
+[ボーカルB]
+{Tonight|こんや}は帰らない
+```
+
+- One lyric line per text line. Empty lines separate stanzas.
+- `[name]` on its own line sets the singer for the lines that follow, until
+  the next tag. Each distinct name becomes one `ttm:agent`.
+- `漢字{よみ}` gives the sung reading of the kanji run directly before the
+  braces. `{text|よみ}` does the same for any text. The output shows only the
+  base text. A wrong reading shifts every timestamp after it, so this
+  syntax is part of the MVP.
+
+## 8. Questions that Step 2 must answer with measurements
+
+1. **Which aligner.** Candidates named from memory, **not yet checked** for
+   quality, licence, or Apple Silicon support: CTC forced alignment with a
+   multilingual or Japanese wav2vec2 model, Whisper-based alignment, and
+   aligners made for singing. Model licences matter: some model weights are
+   non-commercial even when the code is permissive.
+2. **Offset correction.** Compare no offset, one global offset (for example
+   -20 to -40 ms), and an offset per sound class of the first mora (vowel,
+   plosive, fricative, nasal). A single global offset may not be able to
+   fix both vowel starts and long consonants. The error report will be
+   split by sound class to test this.
+3. **Separation quality.** Separation can blur weak consonants. Compare
+   `demucs` with one alternative if consonant starts are the main source of
+   misses.
+4. **Morphological analyzer.** Candidates: SudachiPy (long-unit mode) and
+   MeCab with UniDic. The choice depends on how well compounds stay whole
+   and how often readings are wrong on lyric text.
+5. **Processing time.** Measure each stage on an Apple Silicon Mac against
+   the 1 to 3 minute budget.
+
+## 9. Risks
+
+| Risk | Handling |
+|---|---|
+| Time base differs between files. MP3 and AAC decoders can add different amounts of leading delay. | Convert the song to WAV once. Use that WAV for separation, labelling, and generation. |
+| Model weights are code. Pickle-based weight files can run arbitrary code when loaded. | Download weights only from the official source of each model. Prefer `safetensors` files. Pin versions. |
+| Copyright. | No lyrics or audio in the repository, in tests, or in issues. Tests use made-up text. |
+| Overfitting to three choruses. | Held-out song. More data in Step 3. |
+
+## 10. Plan
+
+1. **Evaluation tools and design** (this step): timing JSON format, Audacity
+   label converter, evaluation command, labelling guide, this document.
+2. **Method comparison:** two or three alignment variants, offset
+   correction, processing time, all measured with the Step 1 tools.
+3. **Core implementation:** the pipeline in section 6, tuned to the targets.
+4. **Output and finish:** TTML with `ttm:agent`, LRC, ASS, user README,
+   licence file, test automation.
