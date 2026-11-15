@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Copyrighted material must never be committed.
+# Reference timing files contain lyric text, so they stay local too.
+eval/data/
+separated/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.aiff
+*.ogg
+
+# OS
+.DS_Store
