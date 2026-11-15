@@ -285,3 +285,13 @@ def test_detailed_report_lists_missed_boundaries_with_their_time():
 
     assert "を" in report
     assert "1.300" in report
+
+
+def test_overlap_with_a_later_chunk_that_is_not_adjacent_is_counted():
+    ref = _ref([("あ", 0), ("い", 500), ("う", 700)])
+    hyp = _doc([("あ", 0, 1000), ("い", 500, 550), ("う", 700, 800)])
+
+    checks = evaluate_pair(ref, hyp).end_time_checks
+
+    assert checks.overlaps == 2  # あ over い, and あ over う
+    assert checks.max_overlap_ms == 500
