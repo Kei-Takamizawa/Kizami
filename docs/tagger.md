@@ -33,7 +33,8 @@ Stop the tagger with Ctrl+C in the terminal.
 
 You can also open `src/kizami/tagger/index.html` directly in a browser
 without the command. Then you drop the audio and text files on the page, and
-**Save** downloads the result instead of writing it to the song folder.
+**Save** downloads the label file instead of writing it to the song folder.
+The work in progress is then kept in the browser.
 
 ## How lyrics become chunks
 
@@ -67,10 +68,11 @@ Useful while tagging:
   line.
 - To redo a part, click its first chunk, go back a little (`←`), play, and
   tap again. New taps replace the old times.
-- **Snap**: a tap is moved to the nearest point where the sound starts to
-  rise, if one is within the given distance (default ±60 ms). That point is
-  the bottom of the dip between two sounds, or the first sound after a
-  silence. Set it to 0 to keep the raw tap times.
+- **Snap**: when the box is ticked, a tap is moved to the nearest point where
+  the sound starts to rise, if one is within the distance in the field next
+  to it (default ±60 ms, 10 to 300 ms). That point is the bottom of the dip
+  between two sounds, or the first sound after a silence. Untick the box, or
+  press `S`, to keep the raw tap times.
 - **Tap offset**: added to every tap, in real time. Use a negative value if
   your taps are late, for example with wireless headphones.
 - **Click sound**: plays a short click at every chunk start, to check the
@@ -85,7 +87,8 @@ Useful while tagging:
 - `Z` `X` move the start 10 ms earlier or later. `C` `V` do the same for the
   end. With `Shift` the step is 50 ms, with `Alt` 1 ms.
 - The **Start**, **End**, and **Length** fields take exact values.
-- `G` snaps the start of the selected chunk to the sound.
+- `G` snaps the start of the selected chunk to the sound, also when Snap is
+  off.
 - `R` or a double click plays only the selected chunk.
 - `U` marks a chunk as unsure. It is saved with a `?` in front, as in the
   [labelling guide](labeling-guide.md). `N` jumps to the next unsure chunk.
@@ -126,8 +129,13 @@ These files contain lyric text. Keep them out of Git, as described in the
 
 - Tap timing depends on the browser and the audio device. Use Snap, or check
   with the click sound.
+- Firefox reports the playback position in coarse steps. The tagger corrects
+  for this. The correction was tested with a simulated stepped clock in
+  Chromium, not in Firefox itself. Strict privacy settings that make the
+  browser clock coarse (for example `privacy.resistFingerprinting`) make tap
+  times less exact.
 - Snap uses a simple loudness curve. It can pick a wrong point when the
   accompaniment is loud, so prefer the separated vocal track.
 - Times made with Snap are not independent of an automatic method that also
-  uses sound starts. Set Snap to 0 for reference data that must be
+  uses sound starts. Turn Snap off for reference data that must be
   independent.

@@ -74,7 +74,8 @@ body.dragover::after { content: "Drop audio, lyrics, or label files"; position: 
   <label class="ctl" id="srcCtl" hidden>Load <select id="srcSel"></select><button id="srcBtn" title="Replace the lyrics or the timing with this file. Undo works.">Load</button></label>
   <button id="openBtn" title="Open audio, lyrics (.txt), label (.txt) or tagger.json files from this computer">Open files…</button>
   <input type="file" id="fileIn" multiple hidden>
-  <label class="ctl" title="A tap is moved to the nearest point where the sound starts to rise, if one is within this distance. 0 turns this off.">Snap ±<input type="number" id="snapMs" min="0" max="300" step="10"> ms</label>
+  <label class="ctl" title="When on, a tap is moved to the nearest point where the sound starts to rise, if one is within the distance on the right. Key: S"><input type="checkbox" id="snapOn"> Snap</label>
+  <label class="ctl" title="Largest distance a tap is moved by Snap">±<input type="number" id="snapMs" min="10" max="300" step="10"> ms</label>
   <label class="ctl" title="Added to every tap during playback, in real time. Use a negative value if your taps are late.">Tap offset <input type="number" id="offsetMs" min="-500" max="500" step="5"> ms</label>
   <label class="ctl" title="Play a short click at every chunk start, to check the timing by ear"><input type="checkbox" id="tick"> Click sound</label>
   <button id="saveBtn" class="primary">Save</button>
@@ -123,7 +124,7 @@ body.dragover::after { content: "Drop audio, lyrics, or label files"; position: 
     <span><kbd>Z</kbd> <kbd>X</kbd> start earlier / later 10 ms</span>
     <span><kbd>C</kbd> <kbd>V</kbd> end earlier / later 10 ms</span>
     <span><kbd>Shift</kbd> 50 ms steps, <kbd>Alt</kbd> 1 ms steps</span>
-    <span><kbd>G</kbd> snap the start to the sound</span>
+    <span><kbd>S</kbd> snap on / off, <kbd>G</kbd> snap this chunk now</span>
     <span><kbd>R</kbd> play only this chunk</span>
     <span><kbd>M</kbd> merge with next, <kbd>T</kbd> split</span>
     <span><kbd>U</kbd> mark as unsure (?), <kbd>N</kbd> next unsure</span>
@@ -155,7 +156,7 @@ let actx = null;
 const S = {
   lines: [], units: [], cur: 0,
   dur: 0, hop: 0.002, lo: null, hi: null, env: null, raw: null, floor: -60, peak: 1,
-  pps: 200, view0: 0, snapMs: 60, offsetMs: 0, joinMs: 150, tick: false, rate: 1,
+  pps: 200, view0: 0, snapOn: true, snapMs: 60, offsetMs: 0, joinMs: 150, tick: false, rate: 1,
   audioName: '', output: 'tagger_labels.txt',
 };
 let els = [], stageLine = -2, lastCurLine = -1, stopAt = null, saveTimer = null, dirty = false;
@@ -165,14 +166,15 @@ const undoStack = [], redoStack = [];
 function loadSettings() {
   try {
     const o = JSON.parse(localStorage.getItem('kizami-tagger-settings') || '{}');
-    for (const k of ['pps', 'snapMs', 'offsetMs', 'tick', 'rate']) if (k in o) S[k] = o[k];
+    for (const k of ['pps', 'snapOn', 'snapMs', 'offsetMs', 'tick', 'rate']) if (k in o) S[k] = o[k];
+    if (!(S.snapMs >= 10)) { S.snapMs = 60; S.snapOn = false; }   // older versions used 0 for off
   } catch (e) { /* storage can be blocked; defaults are fine */ }
-  $('snapMs').value = S.snapMs; $('offsetMs').value = S.offsetMs; $('tick').checked = S.tick;
+  $('snapOn').checked = S.snapOn; $('snapMs').value = S.snapMs; $('snapMs').disabled = !S.snapOn; $('offsetMs').value = S.offsetMs; $('tick').checked = S.tick;
   setRate(S.rate);
 }
 function saveSettings() {
   try {
-    localStorage.setItem('kizami-tagger-settings', JSON.stringify({ pps: S.pps, snapMs: S.snapMs, offsetMs: S.offsetMs, tick: S.tick, rate: S.rate }));
+    localStorage.setItem('kizami-tagger-settings', JSON.stringify({ pps: S.pps, snapOn: S.snapOn, snapMs: S.snapMs, offsetMs: S.offsetMs, tick: S.tick, rate: S.rate }));
   } catch (e) { /* ignore */ }
 }
 function status(msg, err) { $('status').textContent = msg; $('status').title = msg; $('status').className = err ? 'err' : ''; }
@@ -419,8 +421,8 @@ async function save(auto) {
     } else {
       try { localStorage.setItem('kizami-tagger-project', projectJSON()); } catch (e) { /* too large or blocked */ }
       if (!auto) {
-        download(S.output, labels.text, 'text/plain'); download('tagger.json', projectJSON(), 'application/json');
-        status(`Downloaded ${labels.count} labels.`);
+        download(S.output, labels.text, 'text/plain');
+        status(`Downloaded ${labels.count} labels as ${S.output}. The work in progress stays in this browser.`);
       }
     }
     dirty = false;
@@ -428,7 +430,8 @@ async function save(auto) {
 }
 function download(name, text, type) {
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();                // Firefox needs the link in the page
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 async function api(path, opts = {}) {
@@ -472,15 +475,37 @@ async function loadAudio(buf, name) {
   if (t > 0 && t < S.dur) audio.currentTime = t;
   status(`Audio ready: ${name} (${fmtTime(S.dur)}).`);
 }
-const now = () => audio.currentTime || 0;
+/* Song clock. Some browsers (Firefox) refresh audio.currentTime only every few
+   tens of milliseconds. Between two refreshes the reading is too early, never
+   too late, so the largest recent difference to the system clock gives the
+   true position. */
+const clock = { samples: [], since: 0 };
+function clockReset() { clock.samples.length = 0; clock.since = performance.now(); }
+function clockSample() {
+  if (audio.paused || audio.seeking) return;
+  const ct = audio.currentTime, p = performance.now();
+  if (p - clock.since < 250) return;       // playback is still starting up; the plain reading is used
+  const a = clock.samples;
+  a.push([p, ct - p / 1000 * audio.playbackRate]);
+  while (p - a[0][0] > 700) a.shift();
+}
+function songTime(perfMs) {
+  if (audio.paused || !clock.samples.length) return audio.currentTime || 0;
+  let m = -Infinity;
+  for (const s of clock.samples) if (s[1] > m) m = s[1];
+  return Math.max(0, m + perfMs / 1000 * audio.playbackRate);
+}
+for (const type of ['play', 'playing', 'pause', 'seeking', 'seeked', 'ratechange', 'emptied']) audio.addEventListener(type, clockReset);
+audio.addEventListener('timeupdate', clockSample);
+const now = () => songTime(performance.now());
 function evTime(e) {
-  let t = now();
-  if (!audio.paused && e && e.timeStamp) t -= clamp((performance.now() - e.timeStamp) / 1000, 0, 0.1) * audio.playbackRate;
-  return t;
+  clockSample();
+  const p = performance.now();
+  return songTime(e && e.timeStamp ? clamp(e.timeStamp, p - 100, p) : p);
 }
 function seek(t) {
   t = clamp(t, 0, S.dur || 0);
-  audio.currentTime = t; stopAt = null;
+  audio.currentTime = t; stopAt = null; clockReset();
   const W = $('tl').clientWidth / S.pps;
   if (t < S.view0 || t > S.view0 + W) S.view0 = Math.max(0, t - W * 0.3);
 }
@@ -518,7 +543,7 @@ function tapDown(key, e) {
     return;
   }
   pushUndo();
-  let t = snap(raw, S.snapMs) ?? raw;
+  let t = (S.snapOn ? snap(raw, S.snapMs) : null) ?? raw;
   if (p && t < p.s + MIN_LEN) t = p.s + MIN_LEN;
   t = Math.max(0, t);
   u.s = t; u.tap = raw;
@@ -793,9 +818,9 @@ canvas.addEventListener('dblclick', () => playChunk());
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   const r = canvas.getBoundingClientRect(), x = e.clientX - r.left;
-  if (e.ctrlKey || e.metaKey) zoom(Math.exp(-e.deltaY * 0.01), x);
+  if (e.ctrlKey || e.metaKey) zoom(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.1 : 0.01)), x);
   else {
-    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    const d = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (e.deltaMode === 1 ? 32 : 1);   // Firefox mouse wheels count lines
     S.view0 = clamp(S.view0 + d / S.pps, 0, Math.max(0, S.dur - 0.5));
   }
 }, { passive: false });
@@ -807,6 +832,7 @@ function zoom(f, x) {
   saveSettings();
 }
 function frame() {
+  clockSample();
   const t = now();
   if (!audio.paused) {
     if (stopAt != null && t >= stopAt) { audio.pause(); stopAt = null; }
@@ -841,6 +867,7 @@ addEventListener('keydown', e => {
     KeyZ: () => nudge('start', -step), KeyX: () => nudge('start', step),
     KeyC: () => nudge('end', -step), KeyV: () => nudge('end', step),
     KeyG: () => { const u = S.units[S.cur]; if (!u || u.s == null) return; const t = snap(u.s, Math.max(S.snapMs, 60)); if (t == null) { status('No clear sound start near this chunk.'); return; } pushUndo(); setStart(S.cur, t, isLinked(S.cur)); changed(); },
+    KeyS: () => setSnap(!S.snapOn),
     KeyR: playChunk, KeyM: merge, KeyT: split, KeyU: toggleUnsure, KeyN: nextUnsure,
     Digit1: () => setRate(0.5), Digit2: () => setRate(0.75), Digit3: () => setRate(1),
     Minus: () => setRate(S.rate - 0.05), Equal: () => setRate(S.rate + 0.05),
@@ -861,7 +888,12 @@ $('zoomIn').onclick = () => zoom(1.4); $('zoomOut').onclick = () => zoom(1 / 1.4
 $('rate').oninput = e => setRate(+e.target.value);
 $('rate').onchange = e => e.target.blur();
 $('rateReset').onclick = () => setRate(1);
-$('snapMs').onchange = e => { S.snapMs = clamp(+e.target.value || 0, 0, 300); saveSettings(); };
+$('snapMs').onchange = e => { S.snapMs = clamp(+e.target.value || 60, 10, 300); e.target.value = S.snapMs; saveSettings(); };
+function setSnap(on) {
+  S.snapOn = on; $('snapOn').checked = on; $('snapMs').disabled = !on; saveSettings();
+  status(on ? `Snap is on (±${S.snapMs} ms).` : 'Snap is off: taps keep their own time.');
+}
+$('snapOn').onchange = e => { setSnap(e.target.checked); e.target.blur(); };
 $('offsetMs').onchange = e => { S.offsetMs = clamp(+e.target.value || 0, -500, 500); saveSettings(); };
 $('tick').onchange = e => { S.tick = e.target.checked; saveSettings(); e.target.blur(); };
 $('btnPlaySel').onclick = playChunk; $('btnMerge').onclick = merge; $('btnSplit').onclick = split; $('btnClear').onclick = clearTime;
