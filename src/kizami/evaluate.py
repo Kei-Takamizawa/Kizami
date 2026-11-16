@@ -216,12 +216,14 @@ def _locate_excerpt(
 def _end_time_checks(boundaries: Sequence[Boundary]) -> EndTimeChecks:
     missing_end = sum(1 for b in boundaries if b.end_ms is None)
     non_positive = sum(1 for b in boundaries if b.end_ms is not None and b.end_ms <= b.start_ms)
+    # A long chunk can run past several later chunks, so every later chunk
+    # of the same line is checked, not only the next one.
     overlap_amounts = [
-        previous.end_ms - current.start_ms
-        for previous, current in zip(boundaries, boundaries[1:])
-        if previous.line_index == current.line_index
-        and previous.end_ms is not None
-        and previous.end_ms > current.start_ms
+        earlier.end_ms - later.start_ms
+        for index, earlier in enumerate(boundaries)
+        if earlier.end_ms is not None
+        for later in boundaries[index + 1 :]
+        if later.line_index == earlier.line_index and earlier.end_ms > later.start_ms
     ]
     return EndTimeChecks(
         missing_end=missing_end,
