@@ -1,8 +1,8 @@
 # Kizami design
 
 Status: Step 1 (evaluation tools and design). Decisions in this document were
-made on 2026-11-15. Items marked **unverified** are assumptions that Step 2
-must test with measurements.
+made on 2026-11-15. Section 11 was added on 2026-11-16. Items marked
+**unverified** are assumptions that Step 2 must test with measurements.
 
 ## 1. Purpose
 
@@ -38,13 +38,18 @@ Existing automatic tools have two problems:
 - Fast rap and dense harmonies.
 - A graphical editor. Corrections are made in existing TTML editors.
 - Video export.
+- Looking up lyrics online. This is planned after the MVP as an opt-in
+  feature (section 11).
 
 **Anti-goals** (these make the tool a failure even if it runs)
 
 - Splitting inside a word or compound such as `夜空`.
 - Raising one score by gaming the other: many small chunks, or very few.
-- Storing, downloading, or distributing lyrics or audio. Kizami only reads
-  files that the user already has on the local machine.
+- Downloading audio. Kizami reads audio only from a file that the user
+  already has on the local machine. It never fetches audio from a video or
+  streaming service (section 11).
+- Storing or distributing lyrics or audio. Kizami keeps no library and no
+  cache of lyrics or audio.
 
 ## 3. Terms
 
@@ -242,3 +247,73 @@ offset correction, minimum chunk duration.
 3. **Core implementation:** the pipeline in section 6, tuned to the targets.
 4. **Output and finish:** TTML with `ttm:agent`, LRC, ASS, user README,
    licence file, test automation.
+
+## 11. After the MVP: opt-in lyrics lookup
+
+Decided on 2026-11-16. This is not part of Steps 1 to 4. Work on it starts
+only after the core passes its targets on the held-out song.
+
+**What was asked for:** give a video link, get the audio and its details,
+find the lyrics in a lyrics service, and fall back to the user's own lyrics
+file when the service has none.
+
+**What was decided**
+
+| Part | Decision |
+|---|---|
+| Audio from a video or streaming link | Never built in. |
+| Song details (title, artist, album, duration) | Read from the tags of the local audio file. |
+| Lyrics lookup in an online service | Added after the MVP. Off by default. |
+| The user's own lyrics file | Always wins when it is given. Required when the lookup finds nothing. |
+
+**Why audio download is not built in**
+
+- The YouTube Terms of Service (effective 2023-06-01, read on 2026-11-16)
+  do not allow downloading except where the service provides it, and do not
+  allow access by automated means.
+- Timing must be made from the same audio that will be played. A music
+  video can differ from the released track, for example in the length of
+  the intro. Timing made from one then plays shifted on the other. How often
+  this happens is **unverified**.
+- A purchased or ripped file has tags that are more exact than a video
+  title. Tags are the better key for a lyrics lookup.
+
+**Rules for the lookup**
+
+- It runs only when the user asks for it with an option. Without the
+  option, Kizami makes no network request. "Everything runs on your
+  computer" stays true by default.
+- It sends the title, artist, album, and duration of the song. It never
+  sends audio, file paths, or anything that identifies the user. The user
+  documentation must say what is sent and to which service.
+- The service sits behind a small interface, so that it can be replaced.
+- The user checks the fetched text before alignment starts. Library lyrics
+  can leave out repeated sections, can use different kanji or kana than the
+  user wants to show, and have no singer tags and no reading overrides
+  (section 7).
+- Fetched text is treated as untrusted input. It goes through the same
+  parser as a lyrics file.
+- Requests use HTTPS, identify the client by name and version, go one at a
+  time, and obey the rate limits of the service.
+
+**First service candidate: LRCLIB** (documentation read on 2026-11-16)
+
+- No API key. Lookup by track name and artist. Album and duration are
+  optional. A duration matches within 2 seconds.
+- Returns plain lyrics and line-timed lyrics (LRC).
+- About 45 requests per minute for an anonymous client, about 90 for a
+  client that identifies itself.
+- The documentation gives no licence terms for the lyric text. The data is
+  entered by users. Check the terms again before this feature is released.
+
+**Open questions**
+
+1. Do line times from a lookup help the alignment? They could narrow the
+   search to one line. **Unverified.** Step 2 can test this as a side
+   experiment with line times that are supplied by hand. Line times made
+   for a different version of the song would hurt, so they can only be a
+   hint, never a constraint.
+2. Which licensed lyrics service to use if Kizami is ever offered to a wide
+   public. Not investigated.
+3. Which tag formats to read first (MP4, ID3, Vorbis comments), and whether
+   this needs a runtime dependency.
