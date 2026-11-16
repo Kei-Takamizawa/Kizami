@@ -7,7 +7,7 @@ import json
 import sys
 from typing import Sequence
 
-from kizami.audacity import AudacityLabelError
+from kizami.audacity import AudacityLabelError, label_text_from_document
 from kizami.audacity import import_labels as import_label_file
 from kizami.evaluate import (
     DEFAULT_TARGET_PRECISION,
@@ -45,6 +45,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="drop labels without text (unused candidates from suggest-labels)",
     )
+
+    export_labels = commands.add_parser(
+        "export-labels",
+        help="write a timing file as Audacity labels, to review it in Audacity",
+    )
+    export_labels.add_argument("timing", help="timing JSON file")
+    export_labels.add_argument("-o", "--output", required=True, help="label file to write (.txt)")
 
     suggest = commands.add_parser(
         "suggest-labels",
@@ -111,6 +118,14 @@ def _run_import_labels(args: argparse.Namespace) -> None:
     print(f"Wrote {len(chunks)} chunks ({uncertain} marked uncertain) to {args.output}")
     if imported.skipped_empty:
         print(f"Dropped {imported.skipped_empty} labels without text")
+
+
+def _run_export_labels(args: argparse.Namespace) -> None:
+    doc = _load(args.timing)
+    text = label_text_from_document(doc)
+    with open(args.output, "w", encoding="utf-8", newline="\n") as out:
+        out.write(text)
+    print(f"Wrote {text.count(chr(10))} labels to {args.output}")
 
 
 # Audio around the section is analysed too, so that a sound that starts at
@@ -212,6 +227,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_import_labels(args)
         elif args.command == "suggest-labels":
             _run_suggest_labels(args)
+        elif args.command == "export-labels":
+            _run_export_labels(args)
         else:
             _run_eval(args)
     except CliError as exc:

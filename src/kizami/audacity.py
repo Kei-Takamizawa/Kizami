@@ -134,3 +134,22 @@ def load_labels(
     path: str | Path, meta: dict[str, Any] | None = None, skip_empty: bool = False
 ) -> TimingDocument:
     return import_labels(path, meta, skip_empty).document
+
+
+def label_text_from_document(doc: TimingDocument) -> str:
+    """Return Audacity label file content: one point label per chunk, in time order.
+
+    Only start times are written. A person who reviews generated timing in
+    Audacity moves point labels, and only start times are a pass criterion.
+    """
+    chunks = sorted(
+        (chunk for line in doc.lines for chunk in line.chunks),
+        key=lambda chunk: chunk.start_ms,
+    )
+    rows = []
+    for chunk in chunks:
+        seconds = f"{chunk.start_ms / 1000:.6f}"
+        text = " ".join(chunk.text.split())
+        marker = UNCERTAIN_MARKERS[0] if chunk.uncertain else ""
+        rows.append(f"{seconds}\t{seconds}\t{marker}{text}\n")
+    return "".join(rows)

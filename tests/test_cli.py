@@ -239,3 +239,28 @@ def test_suggested_labels_convert_after_text_is_added(tmp_path):
     chunks = load_document(out).lines[0].chunks
     assert [c.text for c in chunks] == ["うた"]
     assert abs(chunks[0].start_ms - 1500) <= 10
+
+
+def test_export_labels_writes_an_audacity_label_file(tmp_path, capsys):
+    doc = _write_doc(tmp_path / "gen.json", [("夜空を", 1000, 1400), ("駆ける", 1500)])
+    out = tmp_path / "auto_labels.txt"
+
+    code = main(["export-labels", str(doc), "-o", str(out)])
+
+    assert code == 0
+    assert out.read_text(encoding="utf-8") == (
+        "1.000000\t1.000000\t夜空を\n1.500000\t1.500000\t駆ける\n"
+    )
+    assert "2 labels" in capsys.readouterr().out
+
+
+def test_export_labels_reports_a_file_that_is_not_a_timing_file(tmp_path, capsys):
+    bad = tmp_path / "gen.json"
+    bad.write_text("{}", encoding="utf-8")
+    out = tmp_path / "auto_labels.txt"
+
+    code = main(["export-labels", str(bad), "-o", str(out)])
+
+    assert code == 2
+    assert capsys.readouterr().err.startswith("error:")
+    assert not out.exists()

@@ -1,7 +1,12 @@
 import pytest
 
-from kizami.audacity import AudacityLabelError, document_from_label_text, load_labels
-from kizami.timing import Chunk
+from kizami.audacity import (
+    AudacityLabelError,
+    document_from_label_text,
+    label_text_from_document,
+    load_labels,
+)
+from kizami.timing import Chunk, Line, TimingDocument
 
 
 def _chunks(text):
@@ -129,3 +134,38 @@ def test_file_with_only_labels_without_text_is_an_error_with_skip_empty():
         document_from_label_text("1.000000\t1.000000\t\n", skip_empty=True)
 
     assert "no labels with text" in str(excinfo.value)
+
+
+def test_label_text_from_document_has_one_point_label_per_chunk_in_time_order():
+    doc = TimingDocument(
+        lines=(
+            Line(chunks=(Chunk("夜空を", 1000, 1400), Chunk("駆ける", 1500))),
+            Line(chunks=(Chunk("あ", 2345),)),
+        )
+    )
+
+    assert label_text_from_document(doc) == (
+        "1.000000\t1.000000\t夜空を\n1.500000\t1.500000\t駆ける\n2.345000\t2.345000\tあ\n"
+    )
+
+
+def test_label_text_from_document_marks_uncertain_chunks():
+    doc = TimingDocument(lines=(Line(chunks=(Chunk("を", 1000, uncertain=True),)),))
+
+    assert label_text_from_document(doc) == "1.000000\t1.000000\t?を\n"
+
+
+def test_label_text_from_document_replaces_tabs_and_line_breaks_in_text():
+    doc = TimingDocument(lines=(Line(chunks=(Chunk("あ\tい\nう", 1000),)),))
+
+    assert label_text_from_document(doc) == "1.000000\t1.000000\tあ い う\n"
+
+
+def test_exported_labels_convert_back_to_the_same_start_times_and_text():
+    doc = TimingDocument(
+        lines=(Line(chunks=(Chunk("夜空を", 1000), Chunk("駆ける", 1500, uncertain=True))),)
+    )
+
+    back = document_from_label_text(label_text_from_document(doc))
+
+    assert list(back.lines[0].chunks) == list(doc.lines[0].chunks)

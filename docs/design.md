@@ -138,6 +138,13 @@ The evaluation also reports, for diagnosis only:
   candidate is missing or wrong. Placing every label by hand took too long.
 - The reference holds start times only. End times are not a pass criterion,
   so the labeller does not mark them.
+- **Review flow (main flow since 2026-11-16).** Kizami makes the timing for
+  the full song. `kizami export-labels` writes it as Audacity labels. The
+  labeller plays the song, corrects the labels that are wrong, and exports
+  them. `kizami import-labels` turns the result into a *reviewed
+  reference*. The labeller also notes the minutes spent. This is less work
+  than labelling from nothing, and it is the same work that a user of the
+  finished tool does. Its cost for the measurement is in section 5.3.
 - File format: [timing-json-format.md](timing-json-format.md).
 - First set: the chorus (30 to 45 s) of 3 songs with different tempos, used
   for tuning, plus 1 more song that is **held out**. The held-out song is
@@ -156,8 +163,21 @@ The evaluation also reports, for diagnosis only:
   At 100 boundaries, a measured 85% has a 95% interval of about 77% to 91%.
   This shows direction but cannot separate 85% from 80%. More data is added
   in Step 3.
-- **Anchoring.** Reference timing must not be made by correcting Kizami
-  output. That would pull the reference toward the tool.
+- **Anchoring.** A reference that is made by correcting Kizami output is
+  pulled toward the tool. A boundary that is 40 ms off and sounds
+  acceptable stays where the tool put it, and then counts as a hit at 0 ms.
+  The review flow accepts this to save labelling time. So a score against
+  a reviewed reference is the **share of boundaries that the reviewer
+  accepted**. It is an upper bound for the share within ±50 ms of the true
+  attack, not a measurement of it. Three things keep the picture honest:
+  - Every report says which kind of reference it used.
+  - The review itself is measured: the number of labels that were moved,
+    added, or removed (`kizami eval reviewed.json generated.json`), and the
+    minutes spent. The minutes test the target of 5 minutes for a 4-minute
+    song directly.
+  - One chorus is labelled by hand on another day, without Kizami output
+    and without candidates. It is the only independent reference. How to
+    treat the held-out song is decided after the first reviewed results.
 - **Candidate bias.** Candidates are a weaker form of anchoring. They come
   from an onset detector, and Kizami snaps to onsets too. Labels that sit
   on candidates can make the scores too good, most of all for long
@@ -225,11 +245,31 @@ offset correction, minimum chunk duration.
 
 ## 8. Questions that Step 2 must answer with measurements
 
-1. **Which aligner.** Candidates named from memory, **not yet checked** for
-   quality, licence, or Apple Silicon support: CTC forced alignment with a
-   multilingual or Japanese wav2vec2 model, Whisper-based alignment, and
-   aligners made for singing. Model licences matter: some model weights are
-   non-commercial even when the code is permissive.
+1. **Which aligner.** Model licences matter: some model weights are
+   non-commercial even when the code is permissive. Kizami is meant for
+   other users too, so a model without such a limit comes first. Read on
+   2026-11-16, none of this is measured on singing yet:
+   - `reazon-research/japanese-wav2vec2-base-rs35kh`: Apache 2.0 (model
+     card). A wav2vec 2.0 model with a CTC output, trained on Japanese
+     speech, 16 kHz input. The model card reports poor results on long
+     audio, so the song must be aligned in sections. **First candidate.**
+   - MMS forced-alignment model (`MMS_FA`): needs romanized text. A
+     third-party page gives its licence as CC-BY-NC 4.0; the official
+     licence text was **not checked**. The same page reports, for one song
+     and this model alone, a median error of 67 ms per character and 82%
+     within 200 ms. This fits the assumption that alignment alone does not
+     reach ±50 ms and that snapping to onsets is needed.
+   - The forced-alignment functions of `torchaudio` are marked as
+     deprecated since version 2.8, with removal announced for 2.9
+     (torchaudio documentation). Kizami therefore does the alignment step
+     (CTC Viterbi) in its own code and uses a model only for the frame
+     scores.
+   - Whisper-based alignment and aligners made for singing: not checked.
+   - **Baseline from an existing tool.** `lyric-align` (PyPI, MIT, version
+     0.4.2 of 2026-10-17) also aligns given lyrics to sung audio, is made
+     for Japanese and Chinese first, and writes TTML and Audacity labels.
+     It should be run on the same songs. If Kizami is not clearly better at
+     chunk starts, the extra stages are not worth their cost.
 2. **Offset correction.** Compare no offset, one global offset (for example
    -20 to -40 ms), and an offset per sound class of the first mora (vowel,
    plosive, fricative, nasal). A single global offset may not be able to
@@ -259,6 +299,9 @@ offset correction, minimum chunk duration.
    label converter, evaluation command, labelling guide, this document.
 2. **Method comparison:** two or three alignment variants, offset
    correction, processing time, all measured with the Step 1 tools.
+   On 2026-11-16 the order changed: a first automatic version is built
+   before any reference exists, and the first references come from the
+   review flow (section 5.2).
 3. **Core implementation:** the pipeline in section 6, tuned to the targets.
 4. **Output and finish:** TTML with `ttm:agent`, LRC, ASS, user README,
    licence file, test automation.

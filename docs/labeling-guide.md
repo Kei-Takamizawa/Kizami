@@ -4,9 +4,14 @@ Reference timing is the ground truth that Kizami output is measured against.
 A person makes it in Audacity by placing one label at the attack of each
 chunk. This guide makes the result repeatable.
 
-The short version: Kizami marks the places where a sound starts
-(*candidates*). You type the chunk text at the candidates that are chunk
-starts, and you check each one by ear. You do not mark where a chunk ends.
+There are three ways to make it. All of them use point labels: you do not
+mark where a chunk ends.
+
+| Way | Your work | Use it for |
+|---|---|---|
+| Review (4.3) | Kizami places all labels. You correct the wrong ones. | Normal work, once Kizami can generate timing. |
+| Candidates (4.1) | Kizami marks where sounds start. You type the text. | Songs or sections that Kizami cannot generate yet. |
+| By hand (4.2) | You place every label. | The independent check in section 6. |
 
 What was checked on a real machine (2026-11-15, macOS on Apple Silicon,
 Python 3.14, demucs 4.1.0, torch 2.15.0, ffmpeg 9.0.2, Audacity 4.0.2):
@@ -107,9 +112,8 @@ found hard and what you decided.
 Menu names are from Audacity 4.0.2. Audacity 3 uses slightly different
 names, given in brackets.
 
-There are two ways. Use candidates (4.1) for normal work. Use the manual
-way (4.2) for the check in section 6, and where a candidate is missing or
-in the wrong place.
+Use the manual way (4.2) for the check in section 6, and where a label or
+a candidate is missing or in the wrong place.
 
 ### 4.1 With candidates
 
@@ -163,6 +167,33 @@ Place point labels only. Do not drag a region to mark where the chunk
 ends. Only start times are a pass criterion, so end times in the reference
 are not needed. If a label does have a region, its end time is stored and
 reported, but it is never used to pass or fail a version.
+
+### 4.3 Review generated timing
+
+1. Write the generated timing as labels:
+
+   ```
+   kizami export-labels eval/data/tune/song1/generated.json -o eval/data/tune/song1/auto_labels.txt
+   ```
+
+2. In Audacity, open `vocals.wav`, then import `auto_labels.txt` as labels.
+   Note the time when you start.
+3. Play the song. Correct only what is wrong:
+   - A label at the wrong time: move it to the attack.
+   - A chunk start that has no label: add a label (4.2, steps 3 to 5).
+   - A label where no new attack is heard: delete it, and add its text to
+     the label before it.
+   - Wrong text: fix the text.
+4. Export the labels as `labels.txt` (4.2, step 7). Note the minutes that
+   the review took.
+5. Convert `labels.txt` (section 5), then count what you changed:
+
+   ```
+   kizami eval eval/data/tune/song1/ref.json eval/data/tune/song1/generated.json --details
+   ```
+
+Keep `generated.json` and `auto_labels.txt` unchanged, so that the
+comparison stays possible.
 
 ### Where exactly is the attack
 
@@ -232,15 +263,19 @@ held-out song by hand (4.2).
 
 ## 7. Rules that keep the reference honest
 
-- Do not make reference timing by correcting Kizami output. Candidates
-  from `kizami suggest-labels` are allowed, because they come from the
-  audio alone and know nothing about the lyrics. They still carry a risk:
-  Kizami also looks for sound starts, so labels that sit exactly on
-  candidates can make Kizami look better than it is. Three rules limit
-  this risk:
-  - Check every candidate that you use by ear.
-  - Move or replace a candidate that is not at the attack as defined in
-    section 4. The definition decides, not the candidate.
-  - Do the check in section 6 without candidates.
+- A reference from the review flow (4.3) is pulled toward Kizami output:
+  a label that is a little off but sounds acceptable stays where it is. A
+  score against such a reference is the share of boundaries that you
+  accepted. It is higher than the share that is truly within ±50 ms. Say
+  which kind of reference a score comes from.
+- Candidates from `kizami suggest-labels` (4.1) come from the audio alone
+  and know nothing about the lyrics. They carry a smaller risk of the same
+  kind, because Kizami also looks for sound starts.
+- For both ways:
+  - Check by ear. Play from just before the label.
+  - The attack as defined in section 4 decides, not the label that is
+    already there.
+  - Do the check in section 6 by hand, without candidates and without
+    Kizami output. It is the only independent measurement.
 - Do not look at Kizami output for the held-out song until a version is
   finished.
