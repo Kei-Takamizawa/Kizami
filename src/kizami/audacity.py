@@ -5,12 +5,17 @@ seconds. A point label has the same start and end. Lines that start with a
 backslash hold a spectral frequency range and carry no timing, so they are
 skipped.
 
+A label file can also hold labels without text. These are candidate
+positions that the labeller did not use (see ``kizami suggest-labels``).
+With ``skip_empty`` they are dropped.
+
 The labelling procedure is described in ``docs/labeling-guide.md``.
 """
 
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +28,14 @@ class AudacityLabelError(ValueError):
     """The label file cannot be converted."""
 
 
+@dataclass(frozen=True)
+class LabelImport:
+    """A converted label file, and how many labels without text were dropped."""
+
+    document: TimingDocument
+    skipped_empty: int = 0
+
+
 def _seconds_to_ms(value: str, line_number: int) -> int:
     try:
         seconds = float(value)
@@ -33,17 +46,20 @@ def _seconds_to_ms(value: str, line_number: int) -> int:
     return round(seconds * 1000)
 
 
-def _parse_line(raw: str, line_number: int) -> Chunk:
+def _parse_line(raw: str, line_number: int, skip_empty: bool) -> Chunk | None:
+    """Return the chunk of one label line, or None for a dropped label without text."""
     columns = raw.split("\t", 2)
-    if len(columns) < 3:
+    text = columns[2].strip() if len(columns) == 3 else ""
+    if len(columns) < 2 or (not text and not skip_empty):
         raise AudacityLabelError(f"line {line_number}: the label has no text")
 
     start_ms = _seconds_to_ms(columns[0], line_number)
     end_ms = _seconds_to_ms(columns[1], line_number)
     if end_ms < start_ms:
         raise AudacityLabelError(f"line {line_number}: the label ends before it starts")
+    if not text:
+        return None
 
-    text = columns[2].strip()
     uncertain = text.startswith(UNCERTAIN_MARKERS)
     if uncertain:
         text = text[1:].strip()
@@ -58,19 +74,31 @@ def _parse_line(raw: str, line_number: int) -> Chunk:
     )
 
 
-def document_from_label_text(text: str, meta: dict[str, Any] | None = None) -> TimingDocument:
+def import_label_text(
+    text: str, meta: dict[str, Any] | None = None, skip_empty: bool = False
+) -> LabelImport:
     """Convert the content of an Audacity label file into a reference document.
 
     All labels go into one line, ordered by start time. Line breaks do not
     affect evaluation, so the label file does not need to carry them.
+
+    A label without text is an error, unless ``skip_empty`` is set. Then it
+    is dropped and counted.
     """
     numbered_chunks: list[tuple[int, Chunk]] = []
+    skipped_empty = 0
     for line_number, raw in enumerate(text.lstrip("﻿").splitlines(), start=1):
         if not raw.strip() or raw.startswith("\\"):
             continue
-        numbered_chunks.append((line_number, _parse_line(raw, line_number)))
+        chunk = _parse_line(raw, line_number, skip_empty)
+        if chunk is None:
+            skipped_empty += 1
+        else:
+            numbered_chunks.append((line_number, chunk))
 
     if not numbered_chunks:
+        if skipped_empty:
+            raise AudacityLabelError("the file has no labels with text")
         raise AudacityLabelError("the file has no labels")
 
     numbered_chunks.sort(key=lambda item: item[1].start_ms)
@@ -81,13 +109,28 @@ def document_from_label_text(text: str, meta: dict[str, Any] | None = None) -> T
                 f"as '{previous.text}'"
             )
 
-    return TimingDocument(
+    document = TimingDocument(
         kind="reference",
         meta=dict(meta or {}),
         lines=(Line(chunks=tuple(chunk for _, chunk in numbered_chunks)),),
     )
+    return LabelImport(document=document, skipped_empty=skipped_empty)
 
 
-def load_labels(path: str | Path, meta: dict[str, Any] | None = None) -> TimingDocument:
+def document_from_label_text(
+    text: str, meta: dict[str, Any] | None = None, skip_empty: bool = False
+) -> TimingDocument:
+    return import_label_text(text, meta, skip_empty).document
+
+
+def import_labels(
+    path: str | Path, meta: dict[str, Any] | None = None, skip_empty: bool = False
+) -> LabelImport:
     text = Path(path).read_text(encoding="utf-8-sig")
-    return document_from_label_text(text, meta)
+    return import_label_text(text, meta, skip_empty)
+
+
+def load_labels(
+    path: str | Path, meta: dict[str, Any] | None = None, skip_empty: bool = False
+) -> TimingDocument:
+    return import_labels(path, meta, skip_empty).document

@@ -7,7 +7,8 @@ import json
 import sys
 from typing import Sequence
 
-from kizami.audacity import AudacityLabelError, load_labels
+from kizami.audacity import AudacityLabelError
+from kizami.audacity import import_labels as import_label_file
 from kizami.evaluate import (
     DEFAULT_TARGET_PRECISION,
     DEFAULT_TARGET_RECALL,
@@ -39,6 +40,26 @@ def _build_parser() -> argparse.ArgumentParser:
     import_labels.add_argument("labels", help="label file exported from Audacity (.txt)")
     import_labels.add_argument("-o", "--output", required=True, help="timing JSON file to write")
     import_labels.add_argument("--title", help="song title to store in the file")
+    import_labels.add_argument(
+        "--skip-empty",
+        action="store_true",
+        help="drop labels without text (unused candidates from suggest-labels)",
+    )
+
+    suggest = commands.add_parser(
+        "suggest-labels",
+        help="find where sounds start in a vocal track and write them as empty labels",
+    )
+    suggest.add_argument("audio", help="vocal track as a PCM WAV file")
+    suggest.add_argument("-o", "--output", required=True, help="label file to write (.txt)")
+    suggest.add_argument("--start", type=float, help="first second of the section to label")
+    suggest.add_argument("--end", type=float, help="last second of the section to label")
+    suggest.add_argument(
+        "--threshold-db", type=float, help="lower gives more candidates (default 2.0)"
+    )
+    suggest.add_argument(
+        "--min-gap-ms", type=int, help="smallest time between two candidates (default 60)"
+    )
 
     evaluate = commands.add_parser(
         "eval",
@@ -80,14 +101,57 @@ def _run_import_labels(args: argparse.Namespace) -> None:
     if args.title:
         meta["title"] = args.title
     try:
-        doc = load_labels(args.labels, meta)
+        imported = import_label_file(args.labels, meta, skip_empty=args.skip_empty)
     except (OSError, UnicodeDecodeError, AudacityLabelError) as exc:
         raise CliError(f"{args.labels}: {exc}") from exc
 
-    save_document(doc, args.output)
-    chunks = doc.lines[0].chunks
+    save_document(imported.document, args.output)
+    chunks = imported.document.lines[0].chunks
     uncertain = sum(1 for chunk in chunks if chunk.uncertain)
     print(f"Wrote {len(chunks)} chunks ({uncertain} marked uncertain) to {args.output}")
+    if imported.skipped_empty:
+        print(f"Dropped {imported.skipped_empty} labels without text")
+
+
+# Audio around the section is analysed too, so that a sound that starts at
+# the edge of the section is seen together with what comes before it.
+SECTION_MARGIN_S = 0.5
+
+
+def _run_suggest_labels(args: argparse.Namespace) -> None:
+    start_s = 0.0 if args.start is None else args.start
+    if start_s < 0:
+        raise CliError("--start must be 0 or more")
+    if args.end is not None and args.end <= start_s:
+        raise CliError("--end must be later than --start")
+
+    try:
+        from kizami import onsets
+    except ImportError as exc:
+        raise CliError(
+            'this command needs numpy. Install it with: pip install "kizami[audio]"'
+        ) from exc
+
+    try:
+        samples, rate = onsets.read_wav_mono(args.audio)
+    except (OSError, onsets.OnsetError) as exc:
+        raise CliError(f"{args.audio}: {exc}") from exc
+
+    end_s = len(samples) / rate if args.end is None else args.end
+    first = max(0, round((start_s - SECTION_MARGIN_S) * rate))
+    last = min(len(samples), round((end_s + SECTION_MARGIN_S) * rate))
+    options = {}
+    if args.threshold_db is not None:
+        options["threshold_db"] = args.threshold_db
+    if args.min_gap_ms is not None:
+        options["min_gap_ms"] = args.min_gap_ms
+    offset_ms = round(1000 * first / rate)
+    found = [ms + offset_ms for ms in onsets.detect_onsets(samples[first:last], rate, **options)]
+    kept = [ms for ms in found if start_s * 1000 <= ms <= end_s * 1000]
+
+    with open(args.output, "w", encoding="utf-8", newline="\n") as out:
+        out.write(onsets.label_text_from_onsets(kept))
+    print(f"Wrote {len(kept)} candidates to {args.output}")
 
 
 def _load(path: str):
@@ -146,6 +210,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "import-labels":
             _run_import_labels(args)
+        elif args.command == "suggest-labels":
+            _run_suggest_labels(args)
         else:
             _run_eval(args)
     except CliError as exc:

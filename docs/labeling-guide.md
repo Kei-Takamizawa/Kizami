@@ -4,6 +4,10 @@ Reference timing is the ground truth that Kizami output is measured against.
 A person makes it in Audacity by placing one label at the attack of each
 chunk. This guide makes the result repeatable.
 
+The short version: Kizami marks the places where a sound starts
+(*candidates*). You type the chunk text at the candidates that are chunk
+starts, and you check each one by ear. You do not mark where a chunk ends.
+
 What was checked on a real machine (2026-11-15, macOS on Apple Silicon,
 Python 3.14, demucs 4.1.0, torch 2.15.0, ffmpeg 9.0.2, Audacity 4.0.2):
 
@@ -12,8 +16,11 @@ Python 3.14, demucs 4.1.0, torch 2.15.0, ffmpeg 9.0.2, Audacity 4.0.2):
   conversion and the separation were **not yet run on a real song**.
 - The Audacity menu names in section 4 were read from Audacity 4.0.2.
 - **Not yet checked:** the content of a label file exported by Audacity 4,
-  the Cmd+B shortcut, and whether Audacity 4.0.2 has a spectrogram view.
-  If one of these differs, report what you see.
+  the Cmd+B shortcut, whether Audacity 4.0.2 has a spectrogram view, and
+  the menu name for importing a label file in Audacity 4. If one of these
+  differs, report what you see.
+- `kizami suggest-labels` (section 4) is tested with synthetic sounds only.
+  How well its candidates fit a real vocal track is **not yet measured**.
 
 ## 0. Set up (once)
 
@@ -100,6 +107,40 @@ found hard and what you decided.
 Menu names are from Audacity 4.0.2. Audacity 3 uses slightly different
 names, given in brackets.
 
+There are two ways. Use candidates (4.1) for normal work. Use the manual
+way (4.2) for the check in section 6, and where a candidate is missing or
+in the wrong place.
+
+### 4.1 With candidates
+
+1. Make the candidates for the chorus. `--start` and `--end` are the first
+   and last second of the section. Without them, the full song is marked.
+
+   ```
+   kizami suggest-labels eval/data/tune/song1/vocals.wav -o eval/data/tune/song1/candidates.txt --start 62 --end 104
+   ```
+
+   The file holds one label without text at each place where a sound
+   starts. There are more candidates than chunks. That is intended.
+   If too many real starts have no candidate, make the file again with a
+   lower `--threshold-db`, for example `--threshold-db 1.0` (default 2.0).
+
+2. In Audacity, open `vocals.wav` (**File > Import**), then import
+   `candidates.txt` as labels [Audacity 3: File > Import > Labels]. Keep
+   `candidates.txt` unchanged in the song folder.
+3. For each chunk start, find its candidate. Play from just before it and
+   check by ear that the sound starts there. Then click the label and type
+   the chunk text.
+4. Leave every other candidate without text. You do not need to delete
+   them.
+5. If the candidate is not at the attack, or there is none, leave it empty
+   and add your own label by hand (4.2, steps 3 to 5). This is common for
+   `s`, `sh`, `ts`, and `h`: the candidate can sit at the vowel, but the
+   attack is the start of the hiss.
+6. Export the labels (4.2, step 7).
+
+### 4.2 By hand
+
 1. **File > Import** and choose `vocals.wav`.
 2. If the menu of the track (the `...` button next to the track name) has a
    spectrogram or multi-view option, turn it on. The spectrogram makes weak
@@ -118,8 +159,10 @@ names, given in brackets.
    **Text file (*.txt)**, choose the song folder, tick the label track under
    **Included label tracks**, and press **Export**.
 
-A label at one point is enough. If you drag a region from the attack to the
-end of the sound, the end time is stored too. End times are optional.
+Place point labels only. Do not drag a region to mark where the chunk
+ends. Only start times are a pass criterion, so end times in the reference
+are not needed. If a label does have a region, its end time is stored and
+reported, but it is never used to pass or fail a version.
 
 ### Where exactly is the attack
 
@@ -153,16 +196,21 @@ consonant.
 ## 5. Convert the labels
 
 ```
-kizami import-labels eval/data/tune/song1/labels.txt -o eval/data/tune/song1/ref.json --title "song1"
+kizami import-labels eval/data/tune/song1/labels.txt -o eval/data/tune/song1/ref.json --title "song1" --skip-empty
 ```
+
+`--skip-empty` drops the candidates that you left without text. The command
+prints how many it dropped. Without this option, a label without text is
+reported as an error, which is the safer setting for labels made by hand.
 
 ## 6. Check your own consistency (once)
 
 The tolerance of ±50 ms is close to what a person can place by hand. This
-check measures how repeatable your labels are.
+check measures how repeatable your labels are. It also measures how much
+the candidates pull your labels toward the detector.
 
-1. On another day, label one chorus again in a new Audacity project. Do not
-   look at the first labels.
+1. On another day, label one chorus again in a new Audacity project, by
+   hand (4.2) and **without candidates**. Do not look at the first labels.
 2. Convert both label files, then compare them:
 
    ```
@@ -177,9 +225,22 @@ If agreement is below about 95%, a perfect tool could not reach the targets
 reliably either. Change the procedure or the tolerance before tuning
 anything.
 
+The report also gives the median timing difference between the two passes.
+The held-out song may be labelled with candidates only if agreement is 95%
+or more **and** the median difference is 10 ms or less. If not, label the
+held-out song by hand (4.2).
+
 ## 7. Rules that keep the reference honest
 
-- Do not make reference timing by correcting Kizami output. Start from an
-  empty label track.
+- Do not make reference timing by correcting Kizami output. Candidates
+  from `kizami suggest-labels` are allowed, because they come from the
+  audio alone and know nothing about the lyrics. They still carry a risk:
+  Kizami also looks for sound starts, so labels that sit exactly on
+  candidates can make Kizami look better than it is. Three rules limit
+  this risk:
+  - Check every candidate that you use by ear.
+  - Move or replace a candidate that is not at the attack as defined in
+    section 4. The definition decides, not the candidate.
+  - Do the check in section 6 without candidates.
 - Do not look at Kizami output for the held-out song until a version is
   finished.

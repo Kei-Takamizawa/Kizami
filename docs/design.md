@@ -128,9 +128,16 @@ The evaluation also reports, for diagnosis only:
 
 ### 5.2 Reference data
 
-- Made by hand in Audacity on the separated vocal track, by looking at the
-  waveform and spectrogram. Tapping in real time is not precise enough for a
-  ±50 ms tolerance. The procedure is in [labeling-guide.md](labeling-guide.md).
+- Made by a person in Audacity on the separated vocal track. Tapping in
+  real time is not precise enough for a ±50 ms tolerance. The procedure is
+  in [labeling-guide.md](labeling-guide.md).
+- Since 2026-11-16 the labeller starts from *candidates*: empty labels at
+  the places where a sound starts, made by `kizami suggest-labels` from the
+  audio alone. The labeller types the chunk text at the candidates that are
+  chunk starts, checks each one by ear, and adds or moves labels where the
+  candidate is missing or wrong. Placing every label by hand took too long.
+- The reference holds start times only. End times are not a pass criterion,
+  so the labeller does not mark them.
 - File format: [timing-json-format.md](timing-json-format.md).
 - First set: the chorus (30 to 45 s) of 3 songs with different tempos, used
   for tuning, plus 1 more song that is **held out**. The held-out song is
@@ -151,6 +158,14 @@ The evaluation also reports, for diagnosis only:
   in Step 3.
 - **Anchoring.** Reference timing must not be made by correcting Kizami
   output. That would pull the reference toward the tool.
+- **Candidate bias.** Candidates are a weaker form of anchoring. They come
+  from an onset detector, and Kizami snaps to onsets too. Labels that sit
+  on candidates can make the scores too good, most of all for long
+  consonants, where a detector tends to mark the vowel. How large this
+  effect is, is **unverified**. It is measured with a second labelling
+  pass of one chorus on another day, by hand and without candidates. The
+  held-out song may use candidates only if the two passes agree on 95% or
+  more of the boundaries and the median difference is 10 ms or less.
 - **Section bias.** Choruses often have doubled vocals and harmonies. Verses
   may behave differently. Step 3 adds verse sections.
 
@@ -253,6 +268,10 @@ offset correction, minimum chunk duration.
 Decided on 2026-11-16. This is not part of Steps 1 to 4. Work on it starts
 only after the core passes its targets on the held-out song.
 
+The lookup is for every user of Kizami, not only for the author. The author
+expects to process many songs, and getting the lyrics text is the main
+manual effort. Timing is made for the local audio file.
+
 **What was asked for:** give a video link, get the audio and its details,
 find the lyrics in a lyrics service, and fall back to the user's own lyrics
 file when the service has none.
@@ -313,7 +332,9 @@ file when the service has none.
    experiment with line times that are supplied by hand. Line times made
    for a different version of the song would hurt, so they can only be a
    hint, never a constraint.
-2. Which licensed lyrics service to use if Kizami is ever offered to a wide
-   public. Not investigated.
+2. Which lyrics service may be used in a public release. Because the
+   lookup is for every user, the terms of the service must be checked
+   before the feature is released. LRCLIB gives no terms for its lyric
+   text. Licensed services are not investigated.
 3. Which tag formats to read first (MP4, ID3, Vorbis comments), and whether
    this needs a runtime dependency.

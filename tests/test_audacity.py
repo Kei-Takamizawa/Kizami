@@ -97,3 +97,35 @@ def test_load_labels_reads_utf8_file(tmp_path):
     doc = load_labels(path)
 
     assert list(doc.lines[0].chunks) == [Chunk(text="星の", start_ms=1000, end_ms=1250)]
+
+
+def test_label_without_text_is_dropped_when_skip_empty_is_set():
+    text = "1.000000\t1.000000\t\n1.500000\t1.500000\tあ\n2.000000\t2.000000\n"
+
+    doc = document_from_label_text(text, skip_empty=True)
+
+    assert list(doc.lines[0].chunks) == [Chunk(text="あ", start_ms=1500)]
+
+
+def test_label_without_text_is_still_an_error_by_default():
+    with pytest.raises(AudacityLabelError) as excinfo:
+        document_from_label_text("1.000000\t1.000000\t\n1.500000\t1.500000\tあ\n")
+
+    assert "line 1" in str(excinfo.value)
+
+
+def test_uncertain_marker_without_text_is_an_error_even_with_skip_empty():
+    with pytest.raises(AudacityLabelError):
+        document_from_label_text("1.000000\t1.000000\t?\n", skip_empty=True)
+
+
+def test_bad_time_in_a_label_without_text_is_an_error_even_with_skip_empty():
+    with pytest.raises(AudacityLabelError):
+        document_from_label_text("abc\t1.000000\t\n1.5\t1.5\tあ\n", skip_empty=True)
+
+
+def test_file_with_only_labels_without_text_is_an_error_with_skip_empty():
+    with pytest.raises(AudacityLabelError) as excinfo:
+        document_from_label_text("1.000000\t1.000000\t\n", skip_empty=True)
+
+    assert "no labels with text" in str(excinfo.value)
