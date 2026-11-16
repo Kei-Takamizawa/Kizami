@@ -270,6 +270,39 @@ offset correction, minimum chunk duration.
      for Japanese and Chinese first, and writes TTML and Audacity labels.
      It should be run on the same songs. If Kizami is not clearly better at
      chunk starts, the extra stages are not worth their cost.
+   - **First prototype (2026-11-16).** Rough times came from Whisper word
+     timestamps (through `stable-ts`), then a snap to onsets. The labeller
+     judged the result on four songs as scattered, with large and small
+     errors, and too few chunks. No numbers exist, because there was no
+     reference yet.
+   - **What published measurements say** (read on 2026-11-16):
+
+     | Method | Within ±50 ms | Data |
+     |---|---|---|
+     | Whisper word timestamps, default | 41 to 64% | read speech (arXiv 2509.09987) |
+     | CTC aligners (MMS, WhisperX) | 76 to 82% | read speech (arXiv 2406.19363) |
+     | Phone-level HMM aligner (MFA) | 89%, median 12.5 ms | read speech (same paper) |
+     | Lyrics alignment research, English songs after vocal separation | median 41 to 50 ms at word starts | Jamendo (DAFx 2025, Cheng et al.) |
+
+     Two conclusions. Whisper word timestamps are too coarse to start
+     from: when the rough time is off by 100 ms or more, the snap picks a
+     neighbouring sound. And alignment alone reaches about half of the
+     boundaries within ±50 ms even in current research on songs, so the
+     target of 85% depends on the snap stage. Whether it can be reached is
+     **unverified**.
+   - **Next design to test (coarse to fine).** (a) Fix the position of
+     each lyric line first, because the large errors are lines in the
+     wrong place. (b) Inside a line, align phonemes, not words. Candidates:
+     a Japanese model trained on singing (SHIRO models, no licence
+     stated), the Japanese MFA acoustic model (CC BY 4.0, trained on
+     speech), and the Apache 2.0 wav2vec2 model above. (c) Snap only
+     inside a narrow window (about ±50 ms) around the phoneme boundary.
+     (d) Choose the chunk size when writing the output, from the phoneme
+     times, so that a different chunk size needs no new alignment.
+   - **Measurement without labelling work.** Public Japanese singing data
+     with phoneme times made by hand could measure the aligner alone.
+     Which corpora have such labels, and their terms, is **not checked**.
+     It does not replace a reference on real songs with separated vocals.
 2. **Offset correction.** Compare no offset, one global offset (for example
    -20 to -40 ms), and an offset per sound class of the first mora (vowel,
    plosive, fricative, nasal). A single global offset may not be able to
