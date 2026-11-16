@@ -1,8 +1,10 @@
 # Kizami design
 
 Status: Step 1 (evaluation tools and design). Decisions in this document were
-made on 2026-11-15. Section 11 was added on 2026-11-16. Items marked
-**unverified** are assumptions that Step 2 must test with measurements.
+made on 2026-11-15. On 2026-11-16 the owner changed three of them: the
+chunk size (section 3.1), the exact place of a chunk start (section 3.2),
+and the split into two editions (section 12). Items marked **unverified**
+are assumptions that must be tested with measurements.
 
 ## 1. Purpose
 
@@ -29,6 +31,8 @@ Existing automatic tools have two problems:
 - 1 to 3 minutes of processing for a 4-minute song on an Apple Silicon Mac.
 - Singer parts (`ttm:agent`) from tags written in the lyrics file.
 - Reading overrides for words that are sung with a non-standard reading.
+- Three chunk sizes from one alignment, chosen when the song is processed
+  (section 3.1).
 
 **Non-goals (MVP)**
 
@@ -43,7 +47,8 @@ Existing automatic tools have two problems:
 
 **Anti-goals** (these make the tool a failure even if it runs)
 
-- Splitting inside a word or compound such as `夜空`.
+- Splitting inside a word or compound such as `夜空` at the **large** chunk
+  size. The medium and small sizes may split inside a word (section 3.1).
 - Raising one score by gaming the other: many small chunks, or very few.
 - Downloading audio. Kizami reads audio only from a file that the user
   already has on the local machine. It never fetches audio from a video or
@@ -63,6 +68,47 @@ Existing automatic tools have two problems:
 
 A long note (melisma, vibrato) is not split. It is one chunk from its attack
 to the end of the sustained sound.
+
+### 3.1 Chunk sizes (decided 2026-11-16)
+
+The first automatic results had too few chunks for the owner. The new rule:
+split the text into characters first, give each character a time and an
+attack strength, then build three chunk sizes from that one result.
+
+| Size | A chunk starts at | Example | Use |
+|---|---|---|---|
+| Large | The start of a word. A particle stays with the word before it. | `夜空を / 駆ける` | Reading for meaning. |
+| Medium | Large starts, and strong attacks inside a word. | `夜 / 空を / 駆け / る` (depends on the attacks) | Groove. |
+| Small | Almost every character. Characters without any attack join the one before. | `夜 / 空 / を / 駆 / け / る` | Following the rhythm closely. |
+
+- The size is an option of the run. Each size is written to its own file.
+- The sizes differ only in how strong an attack must be to start a chunk.
+  The threshold for Medium is chosen by ear from two or three versions.
+- A displayed character is the smallest unit. A kanji that is sung with
+  several morae is not split. A word whose reading cannot be assigned to
+  its characters (for example `今日`) stays one chunk at every size.
+- Accuracy is measured at the small size. Large and Medium take their
+  times from the same per-character result.
+
+### 3.2 Where a chunk starts (changed 2026-11-16)
+
+The owner labelled one chorus and placed each start at **the end of the
+sound before the attack**: the point where the previous hump of the
+waveform ends. This replaces "the start of the consonant" as the reference
+definition. It is the same point or a little earlier. For a plosive such
+as `k` or `t` it is the start of the short silence before the burst, not
+the burst.
+
+Consequences:
+
+- The snap stage looks for the end of the previous sound (the valley of
+  the level before the rise), not for the rise.
+- After a long silence, "the end of the previous sound" would be far too
+  early. The assumption is that the start is then placed shortly before
+  the new sound. This is **not yet confirmed** by the owner.
+- The table in the labelling guide ("Where exactly is the attack") still
+  describes the old definition. It is updated when the question above is
+  answered.
 
 ### Why the consonant start
 
@@ -138,6 +184,12 @@ The evaluation also reports, for diagnosis only:
   candidate is missing or wrong. Placing every label by hand took too long.
 - The reference holds start times only. End times are not a pass criterion,
   so the labeller does not mark them.
+- **First reference (2026-11-16).** One chorus of tuning song 1, from
+  64.28 s to 93 s, per character, made by correcting the second automatic
+  result. It took about 30 minutes for 29 seconds of music. At that rate a
+  4-minute song takes about 4 hours, about 50 times the target of
+  5 minutes. Part of the time went into splitting word chunks into
+  characters by hand, which later versions do themselves.
 - **Review flow (main flow since 2026-11-16).** Kizami makes the timing for
   the full song. `kizami export-labels` writes it as Audacity labels. The
   labeller plays the song, corrects the labels that are wrong, and exports
@@ -414,3 +466,33 @@ file when the service has none.
    text. Licensed services are not investigated.
 3. Which tag formats to read first (MP4, ID3, Vorbis comments), and whether
    this needs a runtime dependency.
+
+## 12. Two editions (decided 2026-11-16)
+
+The owner wants a public tool for everyone and a personal tool that does
+as much as possible. Both use the same core. The personal features are an
+add-on, not a second copy of the code, so that a fix is made once.
+
+| Feature | Public | Personal add-on |
+|---|---|---|
+| Alignment core, three chunk sizes | yes | yes |
+| Song details from the tags of the audio file | yes | yes |
+| Lyrics from LRCLIB | yes, only when asked for | yes, always tried |
+| Open the search page of a lyric site in the browser | yes | yes |
+| Take lyrics from the clipboard into the lyrics file | yes | yes |
+| Draft lyrics from speech recognition | no | yes |
+| Models with a non-commercial licence | no | yes |
+| Watch folder: an audio file dropped into it is processed to the end | no | yes |
+
+- The personal add-on is kept on the owner's machine only. It is not part
+  of this repository.
+- Neither edition takes audio out of a video or streaming service, and
+  neither reads lyric sites by program. The terms of those services do not
+  allow it. The watch folder starts from an audio file that the user
+  already has. It can read the information file that a downloader writes
+  next to the audio.
+- "Open the search page" only builds a search address and hands it to the
+  browser. The user reads and copies the lyrics.
+- Order of work: accuracy first, then the chunk sizes, then the public
+  lyric features, then the personal add-on.
+
