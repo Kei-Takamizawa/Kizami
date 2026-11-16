@@ -56,12 +56,30 @@ Measure how close a timing file is to a hand-made reference.
    share of generated chunk starts that are correct. The targets are 85% and
    80%.
 
+## Tag timing by tapping
+
+`kizami tagger` opens a window in your browser where you tag lyric timing the
+way you play a rhythm game: the song plays, and you press a key each time the
+next piece of the lyrics is sung.
+
+```
+kizami tagger path/to/song-folder
+```
+
+The song folder holds the audio (for example `vocals.wav`) and `lyrics.txt`.
+You can slow the song down, drag the start and end of every chunk on the
+waveform, and start from an existing label file instead of from nothing. The
+result is saved in the same folder as `tagger_labels.txt`, which
+`kizami import-labels` reads. Everything stays on your computer. See the
+[tagger guide](docs/tagger.md).
+
 ## Documents
 
 - [Design](docs/design.md): goals, definitions, evaluation method, planned
   pipeline.
 - [Timing JSON format](docs/timing-json-format.md)
 - [Labelling guide](docs/labeling-guide.md)
+- [Tagger guide](docs/tagger.md)
 
 ## Development
 

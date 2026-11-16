@@ -1,0 +1,939 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kizami Tagger</title>
+<style>
+:root {
+  --bg: #121418; --panel: #1b1e24; --panel2: #242830; --line: #333945;
+  --text: #e8eaee; --dim: #8b93a1; --accent: #ffb454; --accent2: #5cc8ff;
+  --warn: #ff6b81; --ok: #7bd88f; --wave: #4f7396;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text); display: flex; flex-direction: column;
+  font: 14px/1.4 -apple-system, "Hiragino Sans", "Noto Sans JP", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  user-select: none; -webkit-user-select: none; overflow: hidden;
+}
+header { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 15px; margin: 0 6px 0 0; letter-spacing: .04em; }
+header h1 small { color: var(--dim); font-weight: 400; margin-left: 6px; }
+label.ctl { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); white-space: nowrap; }
+select, input[type=number], button {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px;
+}
+input[type=number] { width: 68px; }
+input[type=range] { width: 120px; accent-color: var(--accent); }
+button { cursor: pointer; }
+button:hover { border-color: var(--dim); }
+button.primary { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
+#status { margin-left: auto; color: var(--dim); max-width: 44ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#status.err { color: var(--warn); }
+#tlWrap { position: relative; height: 210px; flex: none; border-bottom: 1px solid var(--line); }
+#tl { width: 100%; height: 100%; display: block; touch-action: none; }
+#transport { display: flex; gap: 12px; align-items: center; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+#clock { font-variant-numeric: tabular-nums; font-size: 15px; min-width: 15ch; }
+#rateVal { font-variant-numeric: tabular-nums; color: var(--text); min-width: 5ch; }
+#progress { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+#stage { flex: none; padding: 14px 16px 8px; min-height: 118px; text-align: center; }
+#stageNow { font-size: 34px; line-height: 1.5; min-height: 51px; }
+#stageNext { color: var(--dim); font-size: 17px; min-height: 26px; margin-top: 4px; }
+#work { display: flex; gap: 12px; padding: 4px 12px 10px; align-items: stretch; flex: none; }
+#pad {
+  flex: 1; min-height: 64px; font-size: 18px; font-weight: 600; letter-spacing: .08em; border-radius: 10px;
+  background: var(--panel2); border: 2px solid var(--line); color: var(--dim); touch-action: none;
+}
+#pad.down { background: var(--accent); color: #1a1200; border-color: var(--accent); }
+#inspector { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; max-width: 62%; }
+#selText { font-size: 20px; min-width: 2.5em; text-align: center; color: var(--accent); }
+#inspector input[type=number] { width: 86px; }
+#lyrics { flex: 1; overflow-y: auto; padding: 8px 16px 24px; border-top: 1px solid var(--line); }
+.line { padding: 3px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.agent { color: var(--accent2); font-size: 11px; margin-right: 6px; border: 1px solid var(--accent2); border-radius: 4px; padding: 0 4px; }
+.unit { display: inline-block; padding: 1px 4px; border-radius: 4px; border-bottom: 2px solid transparent; cursor: pointer; color: var(--dim); white-space: pre; }
+.unit.timed { color: var(--text); background: var(--panel2); }
+.unit.sung { color: var(--accent); }
+.unit.on { background: var(--accent); color: #1a1200; }
+.unit.unc { border-bottom-color: var(--warn); }
+.unit.cur { outline: 2px solid var(--accent2); outline-offset: 0; }
+#stageNow .unit { padding: 2px 6px; margin: 0 1px; cursor: default; }
+#empty { color: var(--dim); padding: 30px; text-align: center; }
+details#help { flex: none; background: var(--panel); border-top: 1px solid var(--line); padding: 5px 12px; color: var(--dim); }
+details#help summary { cursor: pointer; }
+#keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 2px 18px; padding: 6px 0 2px; }
+kbd { background: var(--panel2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Menlo, monospace; color: var(--text); }
+body.dragover::after { content: "Drop audio, lyrics, or label files"; position: fixed; inset: 0; display: grid; place-items: center; background: rgba(18,20,24,.85); font-size: 24px; border: 3px dashed var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Kizami Tagger<small id="folder"></small></h1>
+  <label class="ctl" id="audioCtl" hidden>Audio <select id="audioSel"></select></label>
+  <label class="ctl" id="srcCtl" hidden>Load <select id="srcSel"></select><button id="srcBtn" title="Replace the lyrics or the timing with this file. Undo works.">Load</button></label>
+  <button id="openBtn" title="Open audio, lyrics (.txt), label (.txt) or tagger.json files from this computer">Open files…</button>
+  <input type="file" id="fileIn" multiple hidden>
+  <label class="ctl" title="A tap is moved to the nearest point where the sound starts to rise, if one is within this distance. 0 turns this off.">Snap ±<input type="number" id="snapMs" min="0" max="300" step="10"> ms</label>
+  <label class="ctl" title="Added to every tap during playback, in real time. Use a negative value if your taps are late.">Tap offset <input type="number" id="offsetMs" min="-500" max="500" step="5"> ms</label>
+  <label class="ctl" title="Play a short click at every chunk start, to check the timing by ear"><input type="checkbox" id="tick"> Click sound</label>
+  <button id="saveBtn" class="primary">Save</button>
+  <span id="status"></span>
+</header>
+
+<div id="tlWrap"><canvas id="tl"></canvas></div>
+
+<div id="transport">
+  <button id="playBtn">Play</button>
+  <span id="clock">0:00.000</span>
+  <label class="ctl">Speed <input type="range" id="rate" min="0.25" max="1.5" step="0.05"><span id="rateVal">1.00×</span></label>
+  <button id="rateReset" title="Back to normal speed">1×</button>
+  <label class="ctl">Zoom <button id="zoomOut">−</button><button id="zoomIn">+</button></label>
+  <span id="progress"></span>
+</div>
+
+<div id="stage"><div id="stageNow"></div><div id="stageNext"></div></div>
+
+<div id="work">
+  <button id="pad">TAP &nbsp;(F / J)</button>
+  <div id="inspector">
+    <span id="selText">–</span>
+    <label class="ctl">Start <input type="number" id="inStart" step="0.01" min="0"> s</label>
+    <label class="ctl">End <input type="number" id="inEnd" step="0.01" min="0"> s</label>
+    <label class="ctl">Length <input type="number" id="inLen" step="10" min="10"> ms</label>
+    <label class="ctl"><input type="checkbox" id="inUnc"> ? unsure</label>
+    <button id="btnPlaySel" title="Play only this chunk (R)">▶ Chunk</button>
+    <button id="btnMerge" title="Join with the next chunk (M)">Merge →</button>
+    <button id="btnSplit" title="Split into characters (T)">Split</button>
+    <button id="btnClear" title="Remove the time of this chunk (Delete)">Clear</button>
+  </div>
+</div>
+
+<div id="lyrics"><div id="empty">Loading…</div></div>
+
+<details id="help">
+  <summary>Keys</summary>
+  <div id="keys">
+    <span><kbd>Space</kbd> play / pause</span>
+    <span><kbd>F</kbd> <kbd>J</kbd> <kbd>D</kbd> <kbd>K</kbd> tap at the start of each chunk; hold to set its length</span>
+    <span><kbd>Backspace</kbd> take back the last tap</span>
+    <span><kbd>Enter</kbd> replay from the start of the line</span>
+    <span><kbd>←</kbd> <kbd>→</kbd> move 2 s (<kbd>Shift</kbd>: 0.5 s)</span>
+    <span><kbd>↑</kbd> <kbd>↓</kbd> previous / next chunk</span>
+    <span><kbd>Z</kbd> <kbd>X</kbd> start earlier / later 10 ms</span>
+    <span><kbd>C</kbd> <kbd>V</kbd> end earlier / later 10 ms</span>
+    <span><kbd>Shift</kbd> 50 ms steps, <kbd>Alt</kbd> 1 ms steps</span>
+    <span><kbd>G</kbd> snap the start to the sound</span>
+    <span><kbd>R</kbd> play only this chunk</span>
+    <span><kbd>M</kbd> merge with next, <kbd>T</kbd> split</span>
+    <span><kbd>U</kbd> mark as unsure (?), <kbd>N</kbd> next unsure</span>
+    <span><kbd>Delete</kbd> remove the time of this chunk</span>
+    <span><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> speed 0.5× 0.75× 1×, <kbd>-</kbd> <kbd>=</kbd> slower / faster</span>
+    <span><kbd>⌘Z</kbd> undo, <kbd>⇧⌘Z</kbd> redo, <kbd>⌘S</kbd> save</span>
+    <span>Timeline: drag an edge or a box, <kbd>Alt</kbd>-drag moves one edge only, pinch or <kbd>⌘</kbd>-scroll to zoom</span>
+  </div>
+</details>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+const TOKEN = new URLSearchParams(location.search).get('t');
+const SERVER = location.protocol.startsWith('http') && !!TOKEN;
+const AUDIO_TYPES = { wav: 'audio/wav', mp3: 'audio/mpeg', flac: 'audio/flac', m4a: 'audio/mp4', ogg: 'audio/ogg', aiff: 'audio/aiff' };
+const SMALL = 'ぁぃぅぇぉゃゅょゎゕゖァィゥェォャュョヮヵヶっッー';
+const PUNCT = /[\s、。，．,.!?！？…‥・「」『』（）()〈〉《》【】“”"‘’〜~：:；;♪☆★♡♥―—–]/u;
+const PUNCT_G = new RegExp(PUNCT.source, 'gu');
+const WORD = /[A-Za-z0-9'’À-ɏ-]/u;
+const HAN = /\p{Script=Han}/u;
+const LANE = 40, RULER = 16, MIN_LEN = 0.01, HOLD_MS = 150;
+
+const audio = new Audio();
+audio.preservesPitch = true;
+let actx = null;
+
+const S = {
+  lines: [], units: [], cur: 0,
+  dur: 0, hop: 0.002, lo: null, hi: null, env: null, raw: null, floor: -60, peak: 1,
+  pps: 200, view0: 0, snapMs: 60, offsetMs: 0, joinMs: 150, tick: false, rate: 1,
+  audioName: '', output: 'tagger_labels.txt',
+};
+let els = [], stageLine = -2, lastCurLine = -1, stopAt = null, saveTimer = null, dirty = false;
+const undoStack = [], redoStack = [];
+
+/* ---------- settings ---------- */
+function loadSettings() {
+  try {
+    const o = JSON.parse(localStorage.getItem('kizami-tagger-settings') || '{}');
+    for (const k of ['pps', 'snapMs', 'offsetMs', 'tick', 'rate']) if (k in o) S[k] = o[k];
+  } catch (e) { /* storage can be blocked; defaults are fine */ }
+  $('snapMs').value = S.snapMs; $('offsetMs').value = S.offsetMs; $('tick').checked = S.tick;
+  setRate(S.rate);
+}
+function saveSettings() {
+  try {
+    localStorage.setItem('kizami-tagger-settings', JSON.stringify({ pps: S.pps, snapMs: S.snapMs, offsetMs: S.offsetMs, tick: S.tick, rate: S.rate }));
+  } catch (e) { /* ignore */ }
+}
+function status(msg, err) { $('status').textContent = msg; $('status').title = msg; $('status').className = err ? 'err' : ''; }
+
+/* ---------- lyrics and labels ---------- */
+function splitUnits(line) {
+  const out = [], ch = Array.from(line);
+  let pre = '', i = 0;
+  while (i < ch.length) {
+    const c = ch[i];
+    if (c === '{') {                       // reading for the kanji before it: 宇宙{そら}
+      const j = ch.indexOf('}', i);
+      if (j > i && out.length) {
+        const one = o => HAN.test(o.t) && Array.from(o.t).length === 1;
+        let k = out.length - 1;
+        if (one(out[k])) {
+          while (k > 0 && one(out[k - 1])) k--;
+          out.splice(k, out.length - k, { t: out.slice(k).map(o => o.t).join('') });
+        }
+        out[out.length - 1].t += ch.slice(i, j + 1).join('');
+        i = j + 1; continue;
+      }
+    }
+    if (/\s/u.test(c)) { i++; if (out.length) out[out.length - 1].sp = true; continue; }
+    if (WORD.test(c)) {                    // a Latin word or a number is one chunk
+      let j = i; while (j < ch.length && WORD.test(ch[j])) j++;
+      out.push({ t: pre + ch.slice(i, j).join('') }); pre = ''; i = j; continue;
+    }
+    if (PUNCT.test(c)) { if (out.length) out[out.length - 1].t += c; else pre += c; i++; continue; }
+    if (SMALL.includes(c) && out.length && !out[out.length - 1].sp) { out[out.length - 1].t += c; i++; continue; }
+    out.push({ t: pre + c }); pre = ''; i++;
+  }
+  return out.map(o => o.t);
+}
+function parseLyrics(text) {
+  const lines = [], units = [];
+  let agent = null;
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    let line = raw.trim();
+    const m = line.match(/^\[([^\]]+)\]\s*/);
+    if (m) { agent = m[1]; line = line.slice(m[0].length); }
+    if (!line) continue;
+    const parts = splitUnits(line);
+    if (!parts.length) continue;
+    lines.push(agent ? { agent } : {});
+    for (const t of parts) units.push({ text: t, line: lines.length - 1, s: null, e: null });
+  }
+  return { lines, units };
+}
+function parseLabels(text) {
+  const out = [];
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    if (!raw.trim() || raw.startsWith('\\')) continue;
+    const c = raw.split('\t');
+    const s = parseFloat(c[0]), e = parseFloat(c[1]);
+    let txt = c.slice(2).join(' ').trim(), unc = false;
+    if (!isFinite(s) || s < 0) continue;
+    if (/^[?？]/.test(txt)) { unc = true; txt = txt.slice(1).trim(); }
+    if (!txt) continue;
+    out.push({ text: txt, s, e: isFinite(e) && e > s ? e : null, unc });
+  }
+  return out.sort((a, b) => a.s - b.s);
+}
+const looksLikeLabels = text => {
+  const rows = text.split(/\r?\n/).filter(r => r.trim());
+  return rows.length > 0 && rows.filter(r => /^\d+(\.\d+)?\t\d/.test(r)).length >= rows.length * 0.6;
+};
+const norm = s => s.replace(/\{[^}]*\}/g, '').replace(PUNCT_G, '').toLowerCase();
+
+function setLyrics(text) {
+  const p = parseLyrics(text);
+  if (!p.units.length) { status('That file has no lyric text.', true); return; }
+  pushUndo();
+  S.lines = p.lines; S.units = p.units; S.cur = 0;
+  rebuild(); changed();
+  status(`Loaded ${p.lines.length} lines, ${p.units.length} chunks.`);
+}
+function applyLabels(labels) {
+  if (!labels.length) { status('That file has no labels with text.', true); return; }
+  pushUndo();
+  let matched = false;
+  if (S.units.length) {
+    const chars = [], owner = [];
+    S.units.forEach((u, i) => { for (const c of Array.from(norm(u.text))) { chars.push(c); owner.push(i); } });
+    const lab = labels.map(l => Array.from(norm(l.text)));
+    const hay = chars.join(''), needle = lab.map(a => a.join('')).join('');
+    const p16 = needle ? hay.indexOf(needle) : -1;
+    if (p16 >= 0) {
+      const a = Array.from(hay.slice(0, p16)).length, b = a + Array.from(needle).length;
+      const first = owner[a], last = owner[b - 1];
+      const out = S.units.slice(0, first);
+      let k = a; while (k > 0 && owner[k - 1] === first) k--;
+      if (k < a) out.push({ text: chars.slice(k, a).join(''), line: S.units[first].line, s: null, e: null });
+      let pos = a;
+      labels.forEach((l, j) => {
+        if (!lab[j].length) return;
+        out.push({ text: l.text, line: S.units[owner[pos]].line, s: l.s, e: l.e, unc: l.unc || undefined });
+        pos += lab[j].length;
+      });
+      k = b; while (k < owner.length && owner[k] === last) k++;
+      if (k > b) out.push({ text: chars.slice(b, k).join(''), line: S.units[last].line, s: null, e: null });
+      out.push(...S.units.slice(last + 1));
+      S.units = out; matched = true;
+    }
+  }
+  if (!matched) {
+    const had = S.units.length > 0;
+    S.lines = []; S.units = [];
+    let prevEnd = -9, count = 0;
+    for (const l of labels) {
+      if (l.s - prevEnd > 0.8 || count >= 22) { S.lines.push({}); count = 0; }
+      S.units.push({ text: l.text, line: S.lines.length - 1, s: l.s, e: l.e, unc: l.unc || undefined });
+      prevEnd = l.e ?? l.s; count += Array.from(l.text).length;
+    }
+    status(had ? 'The label text was not found in the lyrics, so the labels replaced the lyrics. Undo brings them back.'
+               : `Loaded ${labels.length} labels.`, had);
+  } else status(`Placed ${labels.length} labels on the lyrics.`);
+  const firstOpen = S.units.findIndex(u => u.s == null);
+  S.cur = firstOpen < 0 ? 0 : firstOpen;
+  rebuild(); changed();
+}
+function formatLabels() {
+  const rows = [];
+  S.units.forEach((u, i) => { if (u.s != null) rows.push([u.s, effEnd(i), (u.unc ? '?' : '') + u.text.replace(/\s+/g, ' ')]); });
+  rows.sort((a, b) => a[0] - b[0]);
+  return { text: rows.map(r => `${r[0].toFixed(6)}\t${Math.max(r[1], r[0]).toFixed(6)}\t${r[2]}\n`).join(''), count: rows.length };
+}
+const toMs = v => v == null ? null : Math.round(v * 1000);
+const fromMs = v => typeof v === 'number' && isFinite(v) ? v / 1000 : null;
+function projectJSON() {
+  return JSON.stringify({
+    format: 'kizami-tagger', version: 1, audio: S.audioName, cursor: S.cur,
+    lines: S.lines.map((l, li) => ({
+      agent: l.agent,
+      units: S.units.filter(u => u.line === li).map(u => ({ text: u.text, start_ms: toMs(u.s), end_ms: toMs(u.e), tap_ms: toMs(u.tap) ?? undefined, uncertain: u.unc || undefined })),
+    })),
+  }, null, 1);
+}
+function loadProject(o, quiet) {
+  if (!o || o.format !== 'kizami-tagger' || !Array.isArray(o.lines)) { status('That JSON file is not a tagger project.', true); return false; }
+  pushUndo();
+  S.lines = []; S.units = [];
+  for (const l of o.lines) {
+    if (!l || !Array.isArray(l.units) || !l.units.length) continue;
+    S.lines.push(l.agent ? { agent: String(l.agent) } : {});
+    for (const u of l.units) {
+      const s = fromMs(u.start_ms);
+      S.units.push({ text: String(u.text), line: S.lines.length - 1, s, e: s == null ? null : fromMs(u.end_ms), tap: fromMs(u.tap_ms) ?? undefined, unc: u.uncertain ? true : undefined });
+    }
+  }
+  S.cur = clamp(o.cursor | 0, 0, Math.max(0, S.units.length - 1));
+  rebuild(); changed(true);
+  if (!quiet) status('Loaded the saved work.');
+  return true;
+}
+
+/* ---------- timing helpers ---------- */
+function prevTimed(i) { for (let k = i - 1; k >= 0; k--) if (S.units[k].s != null) return k; return -1; }
+function nextTimed(i) { for (let k = i + 1; k < S.units.length; k++) if (S.units[k].s != null) return k; return -1; }
+function effEnd(i) {
+  const u = S.units[i];
+  if (u.s == null) return null;
+  if (u.e != null) return u.e;
+  const n = S.units[nextTimed(i)];
+  return soundEnd(u.s, n && n.s > u.s ? n.s : u.s + 4);
+}
+/* Where the sound that starts at s stops: the first 80 ms of near silence before the limit. */
+const endCache = new Map();
+function soundEnd(s, limit) {
+  const env = S.env; if (!env) return Math.min(limit, s + 0.3);
+  const key = s + '|' + limit, hit = endCache.get(key);
+  if (hit != null) return hit;
+  const hop = S.hop, quiet = S.floor + 10, need = Math.round(0.08 / hop), last = Math.min(env.length, Math.round(limit / hop));
+  let out = limit, run = 0;
+  for (let i = Math.round((s + 0.06) / hop); i < last; i++) {
+    run = env[i] < quiet ? run + 1 : 0;
+    if (run >= need) { out = (i - need + 1) * hop; break; }
+  }
+  out = Math.max(out, s + 0.03);
+  if (endCache.size > 4000) endCache.clear();
+  endCache.set(key, out);
+  return out;
+}
+function setStart(i, s, link) {
+  const u = S.units[i], p = S.units[prevTimed(i)], n = S.units[nextTimed(i)];
+  const lo = p ? p.s + MIN_LEN : 0;
+  const hi = (u.e != null ? u.e : n ? n.s : S.dur || 1e9) - MIN_LEN;
+  s = clamp(s, lo, Math.max(lo, hi));
+  if (p && p.e != null && (link || p.e > s)) p.e = s;
+  u.s = s;
+}
+function setEnd(i, e) {
+  const u = S.units[i], n = S.units[nextTimed(i)];
+  u.e = clamp(e, u.s + MIN_LEN, n ? Math.max(n.s, u.s + MIN_LEN) : Math.max(S.dur, u.s + MIN_LEN));
+}
+const isLinked = i => { const p = S.units[prevTimed(i)], u = S.units[i]; return !!p && u.s != null && p.e != null && Math.abs(p.e - u.s) < 2e-4; };
+
+/* Move a time to the point where the sound starts to rise: the bottom of the
+   dip between two sounds, or the first rise after silence. */
+function snap(t, windowMs) {
+  const env = S.env; if (!env || !(windowMs > 0)) return null;
+  const hop = S.hop, w = Math.max(1, Math.round(windowMs / 1000 / hop)), c = Math.round(t / hop), K = 10;
+  let best = -1, bestScore = 0;
+  for (let i = Math.max(1, c - w); i <= Math.min(env.length - K - 1, c + w); i++) {
+    if (env[i + K] < S.floor) continue;
+    const rise = env[i + K] - env[i];
+    if (rise < 6) continue;
+    const score = rise - 6 * Math.abs(i - c) / w;
+    if (score > bestScore) { bestScore = score; best = i; }
+  }
+  if (best < 0) return null;
+  let i = best; const lim = Math.max(1, best - 30);
+  while (i > lim && env[i - 1] < env[i]) i--;
+  // After silence the smoothed loudness rises a little too early: go on to the first real sound.
+  if (env[i] < S.floor) while (i < best + K && S.raw[i] < S.floor) i++;
+  return i * hop;
+}
+
+/* ---------- undo ---------- */
+const snapshot = () => JSON.stringify({ lines: S.lines, units: S.units, cur: S.cur });
+function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 150) undoStack.shift(); redoStack.length = 0; }
+function restore(js) { const o = JSON.parse(js); S.lines = o.lines; S.units = o.units; S.cur = o.cur; rebuild(); changed(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); status('Undone.'); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); status('Redone.'); }
+
+/* ---------- saving ---------- */
+function changed(clean) {
+  if (!clean) {
+    dirty = true;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => save(true), 1500);
+  }
+  updateInspector(); updateProgress();
+}
+async function save(auto) {
+  clearTimeout(saveTimer);
+  if (!S.units.length) return;
+  const labels = formatLabels();
+  try {
+    if (SERVER) {
+      await api('/api/project', { method: 'PUT', body: projectJSON() });
+      if (labels.count) await api('/api/labels', { method: 'PUT', body: labels.text });
+      status(`Saved ${labels.count} labels to ${S.output} at ${new Date().toLocaleTimeString()}.`);
+    } else {
+      try { localStorage.setItem('kizami-tagger-project', projectJSON()); } catch (e) { /* too large or blocked */ }
+      if (!auto) {
+        download(S.output, labels.text, 'text/plain'); download('tagger.json', projectJSON(), 'application/json');
+        status(`Downloaded ${labels.count} labels.`);
+      }
+    }
+    dirty = false;
+  } catch (e) { status(`Save failed: ${e.message}`, true); }
+}
+function download(name, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'X-Kizami-Token': TOKEN } });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r;
+}
+const fileUrl = name => '/api/file?name=' + encodeURIComponent(name);
+
+/* ---------- audio ---------- */
+async function loadAudio(buf, name) {
+  status(`Reading ${name}…`);
+  const t = audio.currentTime || 0;
+  audio.pause();
+  if (audio.src) URL.revokeObjectURL(audio.src);
+  const ext = name.split('.').pop().toLowerCase();
+  audio.src = URL.createObjectURL(new Blob([buf], { type: AUDIO_TYPES[ext] || 'audio/wav' }));
+  audio.playbackRate = S.rate;
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  const ab = await actx.decodeAudioData(buf.slice(0));
+  const sr = ab.sampleRate, n = ab.length, h = Math.max(1, Math.round(sr * 0.002)), m = Math.ceil(n / h);
+  const lo = new Float32Array(m), hi = new Float32Array(m), pw = new Float32Array(m), env = new Float32Array(m);
+  const c0 = ab.getChannelData(0), c1 = ab.numberOfChannels > 1 ? ab.getChannelData(1) : null;
+  let peak = 1e-4;
+  for (let i = 0; i < m; i++) {
+    let a = 1, b = -1, p = 0;
+    const end = Math.min(n, (i + 1) * h);
+    for (let j = i * h; j < end; j++) { const v = c1 ? (c0[j] + c1[j]) * 0.5 : c0[j]; if (v < a) a = v; if (v > b) b = v; p += v * v; }
+    lo[i] = a; hi[i] = b; pw[i] = p / (end - i * h);
+    if (b > peak) peak = b; if (-a > peak) peak = -a;
+  }
+  let mx = -120;
+  for (let i = 0; i < m; i++) {            // loudness over about 22 ms, in dB
+    let p = 0, c = 0;
+    for (let j = Math.max(0, i - 5); j <= Math.min(m - 1, i + 5); j++) { p += pw[j]; c++; }
+    env[i] = 10 * Math.log10(p / c + 1e-12); if (env[i] > mx) mx = env[i];
+  }
+  const raw = pw.map(v => 10 * Math.log10(v + 1e-12));
+  endCache.clear();
+  Object.assign(S, { lo, hi, env, raw, peak, hop: h / sr, floor: mx - 50, dur: ab.duration, audioName: name });
+  if (t > 0 && t < S.dur) audio.currentTime = t;
+  status(`Audio ready: ${name} (${fmtTime(S.dur)}).`);
+}
+const now = () => audio.currentTime || 0;
+function evTime(e) {
+  let t = now();
+  if (!audio.paused && e && e.timeStamp) t -= clamp((performance.now() - e.timeStamp) / 1000, 0, 0.1) * audio.playbackRate;
+  return t;
+}
+function seek(t) {
+  t = clamp(t, 0, S.dur || 0);
+  audio.currentTime = t; stopAt = null;
+  const W = $('tl').clientWidth / S.pps;
+  if (t < S.view0 || t > S.view0 + W) S.view0 = Math.max(0, t - W * 0.3);
+}
+function play() { if (!S.dur) return; if (actx && actx.state === 'suspended') actx.resume(); audio.play().catch(e => status(`Cannot play: ${e.message}`, true)); }
+function toggle() { if (audio.paused) { stopAt = null; play(); } else audio.pause(); }
+function setRate(r) {
+  S.rate = clamp(Math.round(r * 100) / 100, 0.25, 1.5);
+  audio.playbackRate = S.rate; audio.defaultPlaybackRate = S.rate;
+  $('rate').value = S.rate; $('rateVal').textContent = S.rate.toFixed(2) + '×';
+  saveSettings();
+}
+const tickSet = new Set();
+function scheduleTicks(t) {
+  if (!S.tick || !actx) return;
+  for (let i = 0; i < S.units.length; i++) {
+    const s = S.units[i].s;
+    if (s == null || s <= t || s > t + 0.12 || tickSet.has(i)) continue;
+    const at = actx.currentTime + (s - t) / audio.playbackRate, o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = 1800; g.gain.setValueAtTime(0.25, at); g.gain.exponentialRampToValueAtTime(0.001, at + 0.03);
+    o.connect(g).connect(actx.destination); o.start(at); o.stop(at + 0.04);
+    tickSet.add(i); setTimeout(() => tickSet.delete(i), 500);
+  }
+}
+
+/* ---------- tapping ---------- */
+const held = new Map();
+function tapDown(key, e) {
+  const i = S.cur, u = S.units[i];
+  if (!u || !S.dur) return;
+  const playing = !audio.paused;
+  const rate = audio.playbackRate, raw = evTime(e) + (playing ? S.offsetMs / 1000 * rate : 0);
+  const p = S.units[prevTimed(i)], n = S.units[nextTimed(i)];
+  if (p && raw < p.s) {                    // the cursor is on a later chunk than the music
+    status(`Not tagged: "${u.text}" comes after "${p.text}", which starts later than this point. Select the chunk to tag first.`, true);
+    return;
+  }
+  pushUndo();
+  let t = snap(raw, S.snapMs) ?? raw;
+  if (p && t < p.s + MIN_LEN) t = p.s + MIN_LEN;
+  t = Math.max(0, t);
+  u.s = t; u.tap = raw;
+  u.e = null;                              // open until the key is released or the next tap comes
+  if (p && p.e == null) p.e = Math.max(p.s + MIN_LEN, soundEnd(p.s, t));   // quick tap: until the sound stops
+  else if (p && (p.e > t || t - p.e < S.joinMs / 1000 * rate)) p.e = t;
+  if (playing) held.set(key, { i, at: e && e.timeStamp || performance.now() });
+  S.cur = i + 1;                           // past the last chunk: nothing left to tap
+  if (S.cur === S.units.length) status('Last chunk tagged.');
+  $('pad').classList.add('down');
+  changed();
+}
+function tapUp(key, e) {
+  const h = held.get(key); held.delete(key);
+  if (!held.size) $('pad').classList.remove('down');
+  if (!h) return;
+  const i = h.i, u = S.units[i];
+  if (!u || u.s == null || audio.paused) return;
+  if ((e && e.timeStamp || performance.now()) - h.at < HOLD_MS) return;   // a quick tap sets no end
+  const rate = audio.playbackRate, te = evTime(e) + S.offsetMs / 1000 * rate, n = S.units[nextTimed(i)];
+  if (n && n.s <= te + S.joinMs / 1000 * rate) u.e = Math.max(n.s, u.s + MIN_LEN);   // the next sound follows at once
+  else u.e = Math.max(te, u.s + 0.03);
+  changed();
+}
+function untap() {
+  let i = S.cur;
+  if (!S.units[i] || S.units[i].s == null) i--;
+  if (i < 0 || !S.units[i] || S.units[i].s == null) return;
+  pushUndo();
+  const u = S.units[i]; u.s = null; u.e = null; delete u.tap;
+  S.cur = i; changed();
+}
+
+/* ---------- editing ---------- */
+function select(i, andSeek) {
+  if (i < 0 || i >= S.units.length) return;
+  S.cur = i;
+  const u = S.units[i];
+  if (andSeek && audio.paused && u.s != null) seek(u.s);
+  updateInspector();
+}
+function nudge(which, d) {
+  const i = S.cur, u = S.units[i];
+  if (!u || u.s == null) return;
+  pushUndo();
+  if (which === 'start') setStart(i, u.s + d, isLinked(i)); else setEnd(i, effEnd(i) + d);
+  changed();
+}
+function merge() {
+  const i = S.cur, u = S.units[i], n = S.units[i + 1];
+  if (!u || !n || n.line !== u.line) { status('There is no next chunk on this line to merge with.'); return; }
+  pushUndo();
+  u.text += n.text;
+  if (u.s == null) { u.s = n.s; u.e = n.e; } else if (n.s != null) u.e = n.e;
+  if (n.unc) u.unc = true;
+  S.units.splice(i + 1, 1);
+  rebuild(); changed();
+}
+function split() {
+  const i = S.cur, u = S.units[i];
+  if (!u) return;
+  let parts = splitUnits(u.text);
+  if (parts.length < 2) parts = Array.from(u.text.replace(/\{[^}]*\}/g, ''));
+  if (parts.length < 2) { status('This chunk cannot be split further.'); return; }
+  pushUndo();
+  const end = effEnd(i), len = u.s == null ? 0 : (end - u.s) / parts.length;
+  const made = parts.map((t, k) => ({
+    text: t, line: u.line, unc: u.unc,
+    s: u.s == null ? null : u.s + k * len,
+    e: u.s == null ? null : k < parts.length - 1 ? u.s + (k + 1) * len : u.e,
+  }));
+  S.units.splice(i, 1, ...made);
+  rebuild(); changed();
+}
+function clearTime() {
+  const u = S.units[S.cur];
+  if (!u || u.s == null) return;
+  pushUndo(); u.s = null; u.e = null; delete u.tap; changed();
+}
+function toggleUnsure() { const u = S.units[S.cur]; if (!u) return; pushUndo(); u.unc = u.unc ? undefined : true; changed(); }
+function nextUnsure() {
+  const n = S.units.length;
+  for (let k = 1; k <= n; k++) { const i = (S.cur + k) % n; if (S.units[i].unc) { select(i, true); return; } }
+  status('No chunk is marked as unsure.');
+}
+function playChunk() {
+  const i = S.cur, u = S.units[i];
+  if (!u || u.s == null) return;
+  seek(u.s - 0.35); stopAt = effEnd(i) + 0.2; play();
+}
+function replayLine() {
+  const u = S.units[S.cur]; if (!u) return;
+  const first = S.units.findIndex(x => x.line === u.line);
+  let anchor = S.units[first].s;
+  if (anchor == null) { const p = S.units[prevTimed(first)]; anchor = p ? effEnd(prevTimed(first)) : now() - 2; }
+  S.cur = first; seek(anchor - 1.5); play(); updateInspector();
+}
+
+/* ---------- lyric views ---------- */
+function mkUnit(u, i) { const sp = document.createElement('span'); sp.className = 'unit'; sp.textContent = u.text; sp.dataset.i = i; return sp; }
+function rebuild() {
+  const root = $('lyrics'); root.textContent = '';
+  els = S.units.map(() => ({}));
+  if (!S.units.length) {
+    const d = document.createElement('div'); d.id = 'empty';
+    d.textContent = 'No lyrics yet. Put lyrics.txt in the song folder, or drop a lyrics or label file here.';
+    root.appendChild(d);
+  }
+  let lineEl = null, last = -1;
+  S.units.forEach((u, i) => {
+    if (u.line !== last) {
+      lineEl = document.createElement('div'); lineEl.className = 'line';
+      const ag = S.lines[u.line] && S.lines[u.line].agent;
+      if (ag) { const a = document.createElement('span'); a.className = 'agent'; a.textContent = ag; lineEl.appendChild(a); }
+      root.appendChild(lineEl); last = u.line;
+    }
+    els[i].list = lineEl.appendChild(mkUnit(u, i));
+  });
+  stageLine = -2; lastCurLine = -1;
+}
+function buildStage() {
+  const u = S.units[Math.min(S.cur, S.units.length - 1)], line = u ? u.line : -1;
+  if (line === stageLine) return;
+  stageLine = line;
+  const nowEl = $('stageNow'); nowEl.textContent = '';
+  let next = '';
+  S.units.forEach((x, i) => {
+    els[i].stage = null;
+    if (x.line === line) els[i].stage = nowEl.appendChild(mkUnit(x, i));
+    else if (x.line === line + 1) next += x.text;
+  });
+  $('stageNext').textContent = next;
+}
+function setCls(el, c) { if (el && el._c !== c) { el.className = c; el._c = c; } }
+function refresh() {
+  buildStage();
+  const t = now();
+  S.units.forEach((u, i) => {
+    let c = 'unit';
+    if (u.s != null) { c += ' timed'; if (t >= u.s) c += t < effEnd(i) ? ' on' : ' sung'; }
+    if (u.unc) c += ' unc';
+    if (i === S.cur) c += ' cur';
+    setCls(els[i].list, c); setCls(els[i].stage, c);
+  });
+  const u = S.units[S.cur];
+  if (u && u.line !== lastCurLine && els[S.cur].list) { lastCurLine = u.line; els[S.cur].list.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  $('clock').textContent = `${fmtTime(t)} / ${fmtTime(S.dur)}`;
+  $('playBtn').textContent = audio.paused ? 'Play' : 'Pause';
+}
+function fmtTime(t) { t = Math.max(0, t || 0); const m = Math.floor(t / 60); return `${m}:${(t - m * 60).toFixed(3).padStart(6, '0')}`; }
+let inspKey = '';
+function updateInspector() {
+  const u = S.units[S.cur];
+  const key = u ? `${S.cur}|${u.text}|${u.s}|${u.e}|${u.unc}` : '';
+  if (key === inspKey) return; inspKey = key;
+  $('selText').textContent = u ? u.text : '–';
+  const timed = !!u && u.s != null;
+  for (const id of ['inStart', 'inEnd', 'inLen']) $(id).disabled = !timed;
+  $('inStart').value = timed ? u.s.toFixed(3) : '';
+  $('inEnd').value = timed ? effEnd(S.cur).toFixed(3) : '';
+  $('inLen').value = timed ? Math.round((effEnd(S.cur) - u.s) * 1000) : '';
+  $('inUnc').checked = !!(u && u.unc);
+}
+function updateProgress() {
+  const n = S.units.length, t = S.units.filter(u => u.s != null).length, q = S.units.filter(u => u.unc).length;
+  $('progress').textContent = n ? `${t} / ${n} chunks timed` + (q ? ` · ${q} unsure` : '') : '';
+}
+
+/* ---------- timeline ---------- */
+const canvas = $('tl');
+const xToT = x => S.view0 + x / S.pps;
+function draw() {
+  const dpr = window.devicePixelRatio || 1, W = canvas.clientWidth, H = canvas.clientHeight;
+  if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) { canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); }
+  const g = canvas.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = '#121418'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#1b1e24'; g.fillRect(0, H - LANE, W, LANE);
+  const t0 = S.view0, pps = S.pps, WH = H - LANE - RULER, mid = RULER + WH / 2;
+
+  const step = [0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60].find(s => s * pps >= 70) || 60;
+  g.font = '11px ui-monospace, Menlo, monospace'; g.textBaseline = 'middle';
+  for (let t = Math.ceil(t0 / step) * step; t < t0 + W / pps; t += step) {
+    const x = (t - t0) * pps;
+    g.fillStyle = '#262a33'; g.fillRect(x, RULER, 1, WH);
+    const mm = Math.floor((t + 1e-6) / 60), ss = Math.max(0, t - mm * 60);
+    g.fillStyle = '#8b93a1';
+    g.fillText(`${mm}:${step < 1 ? ss.toFixed(2).padStart(5, '0') : String(Math.round(ss)).padStart(2, '0')}`, x + 3, RULER / 2);
+  }
+  if (S.hi) {
+    const amp = WH / 2 / S.peak * 0.95, m = S.hi.length;
+    g.fillStyle = '#4f7396';
+    for (let x = 0; x < W; x++) {
+      const a = Math.floor((t0 + x / pps) / S.hop), b = Math.max(a + 1, Math.floor((t0 + (x + 1) / pps) / S.hop));
+      if (b <= 0 || a >= m) continue;
+      let lo = 1, hi = -1;
+      for (let k = Math.max(0, a); k < Math.min(m, b); k++) { if (S.lo[k] < lo) lo = S.lo[k]; if (S.hi[k] > hi) hi = S.hi[k]; }
+      g.fillRect(x, mid - hi * amp, 1, Math.max(1, (hi - lo) * amp));
+    }
+  }
+  g.font = '14px -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif';
+  S.units.forEach((u, i) => {
+    if (u.s == null) return;
+    const x0 = (u.s - t0) * pps, x1 = (effEnd(i) - t0) * pps;
+    if (x1 < -2 || x0 > W + 2) return;
+    const cur = i === S.cur;
+    g.fillStyle = cur ? '#5cc8ff' : u.unc ? '#ff6b81' : 'rgba(255,255,255,.45)';
+    g.fillRect(Math.round(x0), RULER, cur ? 2 : 1, WH);
+    g.fillStyle = cur ? '#2f6d8f' : i % 2 ? '#3a4150' : '#454d5e';
+    g.globalAlpha = u.e == null ? 0.55 : 1;
+    g.fillRect(x0 + 0.5, H - LANE + 4, Math.max(2, x1 - x0 - 1), LANE - 8);
+    g.globalAlpha = 1;
+    if (u.unc) { g.fillStyle = '#ff6b81'; g.fillRect(x0 + 0.5, H - 7, Math.max(2, x1 - x0 - 1), 3); }
+    if (x1 - x0 > 9) {
+      g.save(); g.beginPath(); g.rect(x0, H - LANE, x1 - x0, LANE); g.clip();
+      g.fillStyle = '#fff'; g.fillText(u.text, x0 + 4, H - LANE / 2);
+      g.restore();
+    }
+  });
+  const px = (now() - t0) * pps;
+  g.fillStyle = '#ffb454'; g.fillRect(Math.round(px) - 1, 0, 2, H);
+}
+function hit(x, y) {
+  const H = canvas.clientHeight, inLane = y > H - LANE, t0 = S.view0, pps = S.pps;
+  let body = null, end = null;
+  for (let i = 0; i < S.units.length; i++) {
+    const u = S.units[i]; if (u.s == null) continue;
+    const x0 = (u.s - t0) * pps, x1 = (effEnd(i) - t0) * pps;
+    if (Math.abs(x - x0) <= 5) return { i, part: 'start' };
+    if (inLane && Math.abs(x - x1) <= 5) end = { i, part: 'end' };
+    else if (inLane && x > x0 && x < x1) body = { i, part: 'body' };
+  }
+  return end || body;
+}
+let drag = null;
+canvas.addEventListener('pointerdown', e => {
+  const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, h = hit(x, y);
+  canvas.setPointerCapture(e.pointerId);
+  drag = { x, y, h, moved: false, undo: false, t: xToT(x) };
+  if (h) {
+    const u = S.units[h.i];
+    drag.orig = { s: u.s, e: effEnd(h.i) };
+    drag.link = h.part === 'start' && !e.altKey && isLinked(h.i);
+    S.cur = h.i; updateInspector();
+  }
+});
+canvas.addEventListener('pointermove', e => {
+  const r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  if (!drag) { const h = hit(x, y); canvas.style.cursor = !h ? 'text' : h.part === 'body' ? 'grab' : 'ew-resize'; return; }
+  if (Math.abs(x - drag.x) > 2) drag.moved = true;
+  if (!drag.moved) return;
+  if (!drag.h) { seek(xToT(x)); return; }
+  if (!drag.undo) { pushUndo(); drag.undo = true; }
+  const i = drag.h.i, u = S.units[i], dt = xToT(x) - drag.t, o = drag.orig;
+  if (drag.h.part === 'start') setStart(i, o.s + dt, drag.link);
+  else if (drag.h.part === 'end') setEnd(i, o.e + dt);
+  else {
+    const p = S.units[prevTimed(i)], n = S.units[nextTimed(i)], len = o.e - o.s;
+    const lo = p ? Math.max(p.s + MIN_LEN, p.e ?? 0) : 0, hi = (n ? n.s : Math.max(S.dur, o.e)) - len;
+    u.s = clamp(o.s + dt, lo, Math.max(lo, hi)); u.e = u.s + len;
+  }
+  updateInspector();
+});
+canvas.addEventListener('pointerup', e => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.moved) { if (d.h) changed(); return; }
+  if (!d.h || d.y <= canvas.clientHeight - LANE) seek(d.t);
+  else if (audio.paused) seek(S.units[d.h.i].s);
+});
+canvas.addEventListener('dblclick', () => playChunk());
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect(), x = e.clientX - r.left;
+  if (e.ctrlKey || e.metaKey) zoom(Math.exp(-e.deltaY * 0.01), x);
+  else {
+    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+    S.view0 = clamp(S.view0 + d / S.pps, 0, Math.max(0, S.dur - 0.5));
+  }
+}, { passive: false });
+function zoom(f, x) {
+  x = x ?? (now() - S.view0) * S.pps;
+  const t = xToT(x);
+  S.pps = clamp(S.pps * f, 20, 3000);
+  S.view0 = Math.max(0, t - x / S.pps);
+  saveSettings();
+}
+function frame() {
+  const t = now();
+  if (!audio.paused) {
+    if (stopAt != null && t >= stopAt) { audio.pause(); stopAt = null; }
+    const W = canvas.clientWidth / S.pps;
+    if (!drag) S.view0 = Math.max(0, t - W * 0.3);
+    scheduleTicks(t);
+  }
+  refresh(); draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- keyboard and buttons ---------- */
+const TAP_KEYS = new Set(['KeyF', 'KeyJ', 'KeyD', 'KeyK']);
+addEventListener('keydown', e => {
+  const tag = e.target.tagName;
+  if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') {
+    if (e.key === 'Escape' || e.key === 'Enter') e.target.blur();
+    if (!(e.target.type === 'checkbox' || e.target.type === 'range') || e.key === 'Escape') return;
+  }
+  if (e.metaKey || e.ctrlKey) {
+    if (e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+    else if (e.code === 'KeyY') { e.preventDefault(); redo(); }
+    else if (e.code === 'KeyS') { e.preventDefault(); save(); }
+    return;
+  }
+  if (TAP_KEYS.has(e.code)) { e.preventDefault(); if (!e.repeat) tapDown(e.code, e); return; }
+  const step = e.altKey ? 0.001 : e.shiftKey ? 0.05 : 0.01;
+  const act = {
+    Space: toggle, Enter: replayLine, Backspace: untap, Delete: clearTime,
+    ArrowLeft: () => seek(now() - (e.shiftKey ? 0.5 : 2)), ArrowRight: () => seek(now() + (e.shiftKey ? 0.5 : 2)),
+    ArrowUp: () => select(S.cur - 1, true), ArrowDown: () => select(S.cur + 1, true),
+    KeyZ: () => nudge('start', -step), KeyX: () => nudge('start', step),
+    KeyC: () => nudge('end', -step), KeyV: () => nudge('end', step),
+    KeyG: () => { const u = S.units[S.cur]; if (!u || u.s == null) return; const t = snap(u.s, Math.max(S.snapMs, 60)); if (t == null) { status('No clear sound start near this chunk.'); return; } pushUndo(); setStart(S.cur, t, isLinked(S.cur)); changed(); },
+    KeyR: playChunk, KeyM: merge, KeyT: split, KeyU: toggleUnsure, KeyN: nextUnsure,
+    Digit1: () => setRate(0.5), Digit2: () => setRate(0.75), Digit3: () => setRate(1),
+    Minus: () => setRate(S.rate - 0.05), Equal: () => setRate(S.rate + 0.05),
+  }[e.code];
+  if (act) { e.preventDefault(); act(); }
+});
+addEventListener('keyup', e => { if (TAP_KEYS.has(e.code)) tapUp(e.code, e); });
+addEventListener('blur', () => { held.clear(); $('pad').classList.remove('down'); });
+document.addEventListener('click', e => { const b = e.target.closest('button'); if (b) b.blur(); });
+
+$('pad').addEventListener('pointerdown', e => { e.preventDefault(); $('pad').setPointerCapture(e.pointerId); tapDown('pad', e); });
+$('pad').addEventListener('pointerup', e => tapUp('pad', e));
+$('pad').addEventListener('pointercancel', e => tapUp('pad', e));
+$('lyrics').addEventListener('click', e => { const i = e.target.dataset && e.target.dataset.i; if (i != null) select(+i, true); });
+$('playBtn').onclick = toggle;
+$('saveBtn').onclick = () => save();
+$('zoomIn').onclick = () => zoom(1.4); $('zoomOut').onclick = () => zoom(1 / 1.4);
+$('rate').oninput = e => setRate(+e.target.value);
+$('rate').onchange = e => e.target.blur();
+$('rateReset').onclick = () => setRate(1);
+$('snapMs').onchange = e => { S.snapMs = clamp(+e.target.value || 0, 0, 300); saveSettings(); };
+$('offsetMs').onchange = e => { S.offsetMs = clamp(+e.target.value || 0, -500, 500); saveSettings(); };
+$('tick').onchange = e => { S.tick = e.target.checked; saveSettings(); e.target.blur(); };
+$('btnPlaySel').onclick = playChunk; $('btnMerge').onclick = merge; $('btnSplit').onclick = split; $('btnClear').onclick = clearTime;
+$('inUnc').onchange = e => { toggleUnsure(); e.target.blur(); };
+function fromInput(fn) {
+  return e => {
+    const v = parseFloat(e.target.value), u = S.units[S.cur];
+    if (!u || u.s == null || !isFinite(v)) { inspKey = ''; updateInspector(); return; }
+    pushUndo(); fn(v, u); inspKey = ''; changed();
+  };
+}
+$('inStart').onchange = fromInput(v => setStart(S.cur, v, isLinked(S.cur)));
+$('inEnd').onchange = fromInput(v => setEnd(S.cur, v));
+$('inLen').onchange = fromInput((v, u) => setEnd(S.cur, u.s + v / 1000));
+addEventListener('beforeunload', e => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
+
+/* ---------- opening files ---------- */
+async function openFiles(files) {
+  for (const f of files) {
+    const ext = f.name.split('.').pop().toLowerCase();
+    try {
+      if (AUDIO_TYPES[ext]) await loadAudio(await f.arrayBuffer(), f.name);
+      else if (ext === 'json') loadProject(JSON.parse(await f.text()));
+      else openText(await f.text());
+    } catch (e) { status(`${f.name}: ${e.message}`, true); }
+  }
+}
+function openText(text) { if (looksLikeLabels(text)) applyLabels(parseLabels(text)); else setLyrics(text); }
+$('openBtn').onclick = () => $('fileIn').click();
+$('fileIn').onchange = e => { openFiles([...e.target.files]); e.target.value = ''; };
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragover'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dragover'); });
+addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dragover'); openFiles([...e.dataTransfer.files]); });
+
+async function start() {
+  loadSettings();
+  rebuild();
+  requestAnimationFrame(frame);
+  if (!SERVER) {
+    try { const saved = localStorage.getItem('kizami-tagger-project'); if (saved) loadProject(JSON.parse(saved), true); } catch (e) { /* ignore */ }
+    status('Open or drop an audio file and a lyrics file to start.');
+    return;
+  }
+  try {
+    const info = await (await api('/api/session')).json();
+    S.output = info.output;
+    $('folder').textContent = info.folder;
+    const text = async name => (await api(fileUrl(name))).text();
+
+    if (info.project) loadProject(JSON.parse(await text(info.project)), true);
+    else if (info.lyrics) setLyrics(await text(info.lyrics));
+    if (info.labels && !info.project) applyLabels(parseLabels(await text(info.labels)));
+    undoStack.length = 0; dirty = false; clearTimeout(saveTimer);
+
+    const srcSel = $('srcSel');
+    for (const name of info.texts) srcSel.add(new Option(name === info.lyrics ? `${name} (clears all times)` : name, name));
+    if (info.texts.length) $('srcCtl').hidden = false;
+    $('srcBtn').onclick = async () => { try { openText(await text(srcSel.value)); } catch (e) { status(e.message, true); } };
+
+    const audioSel = $('audioSel');
+    for (const name of info.audio) audioSel.add(new Option(name, name));
+    const first = info.audio.includes('vocals.wav') ? 'vocals.wav' : info.audio[0];
+    const getAudio = async name => loadAudio(await (await api(fileUrl(name))).arrayBuffer(), name);
+    audioSel.onchange = async () => { audioSel.blur(); try { await getAudio(audioSel.value); } catch (e) { status(e.message, true); } };
+    if (first) { audioSel.value = first; $('audioCtl').hidden = false; await getAudio(first); }
+    else status('No audio file in the song folder. Drop one here.', true);
+    if (info.project) status(`Continued the saved work (${info.project}).` + (info.labels ? ` ${info.labels} was not loaded; use Load for that.` : ''));
+    const u = S.units[S.cur];
+    if (u && u.s != null) seek(u.s);
+  } catch (e) { status(`Could not start: ${e.message}`, true); }
+}
+start();
+</script>
+</body>
+</html>

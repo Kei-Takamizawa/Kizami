@@ -18,6 +18,9 @@ from kizami.evaluate import (
     format_report,
     result_to_dict,
 )
+from kizami.tagger import DEFAULT_OUTPUT as DEFAULT_TAGGER_OUTPUT
+from kizami.tagger import DEFAULT_PORT as DEFAULT_TAGGER_PORT
+from kizami.tagger import TaggerError, serve
 from kizami.timing import TimingFormatError, load_document, save_document
 
 
@@ -72,6 +75,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "--details", action="store_true", help="list every boundary that is not a hit"
     )
     evaluate.add_argument("--json", action="store_true", help="print the results as JSON")
+
+    tagger = commands.add_parser(
+        "tagger",
+        help="open the tap-to-tag window for one song folder in the browser",
+    )
+    tagger.add_argument("folder", help="song folder with the audio file and lyrics.txt")
+    tagger.add_argument(
+        "--labels", help="label file in the folder to start from, for example auto_labels.txt"
+    )
+    tagger.add_argument(
+        "--output",
+        default=DEFAULT_TAGGER_OUTPUT,
+        help=f"label file to write in the folder (default {DEFAULT_TAGGER_OUTPUT})",
+    )
+    tagger.add_argument(
+        "--port", type=int, default=DEFAULT_TAGGER_PORT, help="port on this computer to use"
+    )
+    tagger.add_argument(
+        "--no-browser", action="store_true", help="print the address but do not open the browser"
+    )
     return parser
 
 
@@ -141,11 +164,26 @@ def _run_eval(args: argparse.Namespace) -> None:
     )
 
 
+def _run_tagger(args: argparse.Namespace) -> None:
+    try:
+        serve(
+            args.folder,
+            port=args.port,
+            output=args.output,
+            labels=args.labels,
+            open_browser=not args.no_browser,
+        )
+    except TaggerError as exc:
+        raise CliError(str(exc)) from exc
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "import-labels":
             _run_import_labels(args)
+        elif args.command == "tagger":
+            _run_tagger(args)
         else:
             _run_eval(args)
     except CliError as exc:
