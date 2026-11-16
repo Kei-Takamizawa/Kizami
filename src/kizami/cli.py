@@ -41,6 +41,12 @@ def _build_parser() -> argparse.ArgumentParser:
     import_labels.add_argument("-o", "--output", required=True, help="timing JSON file to write")
     import_labels.add_argument("--title", help="song title to store in the file")
     import_labels.add_argument(
+        "--start", type=float, help="first second of the section that was labelled or reviewed"
+    )
+    import_labels.add_argument(
+        "--end", type=float, help="last second of the section that was labelled or reviewed"
+    )
+    import_labels.add_argument(
         "--skip-empty",
         action="store_true",
         help="drop labels without text (unused candidates from suggest-labels)",
@@ -107,8 +113,18 @@ def _run_import_labels(args: argparse.Namespace) -> None:
     meta = {"source": "audacity-labels"}
     if args.title:
         meta["title"] = args.title
+    if args.start is not None and args.start < 0:
+        raise CliError("--start must be 0 or more")
+    if args.start is not None and args.end is not None and args.end <= args.start:
+        raise CliError("--end must be later than --start")
+    start_ms = None if args.start is None else round(args.start * 1000)
+    end_ms = None if args.end is None else round(args.end * 1000)
+    if start_ms is not None or end_ms is not None:
+        meta["range_ms"] = [start_ms, end_ms]
     try:
-        imported = import_label_file(args.labels, meta, skip_empty=args.skip_empty)
+        imported = import_label_file(
+            args.labels, meta, skip_empty=args.skip_empty, start_ms=start_ms, end_ms=end_ms
+        )
     except (OSError, UnicodeDecodeError, AudacityLabelError) as exc:
         raise CliError(f"{args.labels}: {exc}") from exc
 

@@ -178,7 +178,8 @@ reported, but it is never used to pass or fail a version.
 
 2. In Audacity, open `vocals.wav`, then import `auto_labels.txt` as labels.
    Note the time when you start.
-3. Play the song. Correct only what is wrong:
+3. Play the song, or one section of it. If you review one section only,
+   note its first and last second. Correct only what is wrong:
    - A label at the wrong time: move it to the attack.
    - A chunk start that has no label: add a label (4.2, steps 3 to 5).
    - A label where no new attack is heard: delete it, and add its text to
@@ -233,6 +234,15 @@ kizami import-labels eval/data/tune/song1/labels.txt -o eval/data/tune/song1/ref
 `--skip-empty` drops the candidates that you left without text. The command
 prints how many it dropped. Without this option, a label without text is
 reported as an error, which is the safer setting for labels made by hand.
+
+If the label file covers the full song but you checked only one section
+(4.1 without `--start` and `--end`, or 4.3), give that section in seconds.
+Labels outside it are left out of the reference, because nobody checked
+them:
+
+```
+kizami import-labels eval/data/tune/song1/labels.txt -o eval/data/tune/song1/ref.json --start 65 --end 105
+```
 
 ## 6. Check your own consistency (once)
 

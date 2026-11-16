@@ -169,3 +169,23 @@ def test_exported_labels_convert_back_to_the_same_start_times_and_text():
     back = document_from_label_text(label_text_from_document(doc))
 
     assert list(back.lines[0].chunks) == list(doc.lines[0].chunks)
+
+
+def test_only_labels_inside_the_given_range_are_kept():
+    text = "1.0\t1.0\tあ\n2.0\t2.0\tい\n3.0\t3.0\tう\n4.0\t4.0\tえ\n"
+
+    doc = document_from_label_text(text, start_ms=2000, end_ms=3000)
+
+    assert [c.text for c in doc.lines[0].chunks] == ["い", "う"]
+
+
+def test_range_with_no_labels_inside_is_an_error():
+    with pytest.raises(AudacityLabelError) as excinfo:
+        document_from_label_text("1.0\t1.0\tあ\n", start_ms=5000, end_ms=6000)
+
+    assert "range" in str(excinfo.value)
+
+
+def test_labels_outside_the_range_are_still_checked_for_errors():
+    with pytest.raises(AudacityLabelError):
+        document_from_label_text("abc\t1.0\tあ\n2.0\t2.0\tい\n", start_ms=2000, end_ms=3000)

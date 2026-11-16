@@ -75,7 +75,12 @@ def _parse_line(raw: str, line_number: int, skip_empty: bool) -> Chunk | None:
 
 
 def import_label_text(
-    text: str, meta: dict[str, Any] | None = None, skip_empty: bool = False
+    text: str,
+    meta: dict[str, Any] | None = None,
+    skip_empty: bool = False,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
 ) -> LabelImport:
     """Convert the content of an Audacity label file into a reference document.
 
@@ -84,6 +89,10 @@ def import_label_text(
 
     A label without text is an error, unless ``skip_empty`` is set. Then it
     is dropped and counted.
+
+    ``start_ms`` and ``end_ms`` keep only the labels that start inside that
+    range (both ends included). Use them when a person reviewed only one
+    section of a label file that covers the full song.
     """
     numbered_chunks: list[tuple[int, Chunk]] = []
     skipped_empty = 0
@@ -100,6 +109,16 @@ def import_label_text(
         if skipped_empty:
             raise AudacityLabelError("the file has no labels with text")
         raise AudacityLabelError("the file has no labels")
+
+    if start_ms is not None or end_ms is not None:
+        numbered_chunks = [
+            (line_number, chunk)
+            for line_number, chunk in numbered_chunks
+            if (start_ms is None or chunk.start_ms >= start_ms)
+            and (end_ms is None or chunk.start_ms <= end_ms)
+        ]
+        if not numbered_chunks:
+            raise AudacityLabelError("no label with text starts inside the given range")
 
     numbered_chunks.sort(key=lambda item: item[1].start_ms)
     for (_, previous), (line_number, chunk) in zip(numbered_chunks, numbered_chunks[1:]):
@@ -118,16 +137,28 @@ def import_label_text(
 
 
 def document_from_label_text(
-    text: str, meta: dict[str, Any] | None = None, skip_empty: bool = False
+    text: str,
+    meta: dict[str, Any] | None = None,
+    skip_empty: bool = False,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
 ) -> TimingDocument:
-    return import_label_text(text, meta, skip_empty).document
+    return import_label_text(
+        text, meta, skip_empty, start_ms=start_ms, end_ms=end_ms
+    ).document
 
 
 def import_labels(
-    path: str | Path, meta: dict[str, Any] | None = None, skip_empty: bool = False
+    path: str | Path,
+    meta: dict[str, Any] | None = None,
+    skip_empty: bool = False,
+    *,
+    start_ms: int | None = None,
+    end_ms: int | None = None,
 ) -> LabelImport:
     text = Path(path).read_text(encoding="utf-8-sig")
-    return import_label_text(text, meta, skip_empty)
+    return import_label_text(text, meta, skip_empty, start_ms=start_ms, end_ms=end_ms)
 
 
 def load_labels(

@@ -264,3 +264,27 @@ def test_export_labels_reports_a_file_that_is_not_a_timing_file(tmp_path, capsys
     assert code == 2
     assert capsys.readouterr().err.startswith("error:")
     assert not out.exists()
+
+
+def test_import_labels_keeps_only_the_reviewed_range(tmp_path, capsys):
+    labels = tmp_path / "labels.txt"
+    labels.write_text("1.0\t1.0\tあ\n65.5\t65.5\tい\n80.0\t80.0\tう\n200.0\t200.0\tえ\n", encoding="utf-8")
+    out = tmp_path / "ref.json"
+
+    code = main(["import-labels", str(labels), "-o", str(out), "--start", "65", "--end", "105"])
+
+    assert code == 0
+    doc = load_document(out)
+    assert [c.text for c in doc.lines[0].chunks] == ["い", "う"]
+    assert doc.meta["range_ms"] == [65000, 105000]
+    assert "2 chunks" in capsys.readouterr().out
+
+
+def test_import_labels_rejects_end_before_start(tmp_path, capsys):
+    labels = tmp_path / "labels.txt"
+    labels.write_text("1.0\t1.0\tあ\n", encoding="utf-8")
+
+    code = main(["import-labels", str(labels), "-o", str(tmp_path / "r.json"), "--start", "5", "--end", "2"])
+
+    assert code == 2
+    assert "--end" in capsys.readouterr().err
