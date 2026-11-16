@@ -4,35 +4,49 @@ Reference timing is the ground truth that Kizami output is measured against.
 A person makes it in Audacity by placing one label at the attack of each
 chunk. This guide makes the result repeatable.
 
-The shell commands for audio conversion and vocal separation in section 1
-were written from tool documentation. They were **not yet run** as part of
-this project. If one fails, report the error message.
+What was checked on a real machine (2026-11-15, macOS on Apple Silicon,
+Python 3.14, demucs 4.1.0, torch 2.15.0, ffmpeg 9.0.2, Audacity 4.0.2):
+
+- The setup commands in section 0 and the `demucs` command in section 1 ran
+  without error. The input was a 10-second test tone. The `ffmpeg`
+  conversion and the separation were **not yet run on a real song**.
+- The Audacity menu names in section 4 were read from Audacity 4.0.2.
+- **Not yet checked:** the content of a label file exported by Audacity 4,
+  the Cmd+B shortcut, and whether Audacity 4.0.2 has a spectrogram view.
+  If one of these differs, report what you see.
+
+## 0. Set up (once)
+
+Kizami needs Python 3.10 or newer.
+
+```
+git clone https://github.com/Kei-Takamizawa/Kizami.git
+cd Kizami
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pip install demucs numpy
+```
+
+`numpy` is named on purpose. demucs 4.1.0 needs it but does not install it,
+and fails with `No module named 'numpy'` without it. The first separation
+downloads the model once.
+
+Also install `ffmpeg` and Audacity, for example with Homebrew:
+`brew install ffmpeg` and `brew install --cask audacity`.
+
+Run the commands in the next sections from the `Kizami` folder, with the
+environment active (`source .venv/bin/activate`).
 
 ## 1. Prepare the audio (once per song)
 
-1. Convert the song to WAV. Use this one WAV file for every later step, so
-   that all times share the same zero point. Different decoders can shift
-   MP3 or AAC audio by tens of milliseconds.
-
-   ```
-   ffmpeg -i song.mp3 -ar 44100 -ac 2 song.wav
-   ```
-
-2. Separate the vocal track.
-
-   ```
-   python3 -m pip install demucs
-   demucs --two-stems=vocals -o separated song.wav
-   ```
-
-   The vocal track is `separated/htdemucs/song/vocals.wav`.
-
-3. Keep the files in `eval/data/`. Git ignores this folder, because the
-   files contain copyrighted audio and lyrics.
+1. Put the song file in its folder, for example `eval/data/tune/song1/`.
+   Git ignores `eval/data/`, because the files contain copyrighted audio and
+   lyrics.
 
    ```
    eval/data/
-     tune/song1/      song.wav  vocals.wav  labels.txt  ref.json
+     tune/song1/      song.wav  labels.txt  ref.json  separated/
      tune/song2/
      tune/song3/
      holdout/song4/
@@ -40,6 +54,23 @@ this project. If one fails, report the error message.
 
    `tune` songs are for choosing methods and parameters. The `holdout` song
    is evaluated only when a version is declared finished.
+
+2. Convert the song to WAV. Use this one WAV file for every later step, so
+   that all times share the same zero point. Different decoders can shift
+   MP3 or AAC audio by tens of milliseconds.
+
+   ```
+   ffmpeg -i eval/data/tune/song1/song.m4a -ar 44100 -ac 2 eval/data/tune/song1/song.wav
+   ```
+
+3. Separate the vocal track.
+
+   ```
+   demucs --two-stems=vocals -o eval/data/tune/song1/separated eval/data/tune/song1/song.wav
+   ```
+
+   The vocal track is
+   `eval/data/tune/song1/separated/htdemucs/song/vocals.wav`.
 
 ## 2. Choose the section
 
@@ -66,19 +97,26 @@ found hard and what you decided.
 
 ## 4. Place the labels in Audacity
 
-Menu names are from Audacity 3 and can differ slightly between versions.
+Menu names are from Audacity 4.0.2. Audacity 3 uses slightly different
+names, given in brackets.
 
-1. **File > Import > Audio** and choose `vocals.wav`.
-2. In the track menu, choose **Multi-view** to see the waveform and the
-   spectrogram together.
-3. Zoom in until 50 ms is clearly wider than the cursor. As a guide, about
-   2 seconds of audio across the window.
+1. **File > Import** and choose `vocals.wav`.
+2. If the menu of the track (the `...` button next to the track name) has a
+   spectrogram or multi-view option, turn it on. The spectrogram makes weak
+   consonants such as `s` and `h` visible. If there is no such option, use
+   the waveform and your ears, and mark doubtful positions with `?`.
+3. Zoom in (**View > Zoom > Zoom in**) until 50 ms is clearly wider than the
+   cursor. As a guide, about 2 seconds of audio across the window.
 4. Click at the attack of a chunk. Check by ear: play from just before the
    cursor.
-5. Press **Cmd+B** (Edit > Labels > Add Label at Selection), type the chunk
-   text exactly as in the lyrics, and press Enter.
+5. **Edit > Label > Add label** [Audacity 3: Edit > Labels > Add Label at
+   Selection, Cmd+B]. The first label creates a label track. Type the chunk
+   text exactly as in the lyrics and press Enter.
 6. Repeat for each chunk.
-7. **File > Export Other > Export Labels** and save as `labels.txt`.
+7. **File > Export labels** [Audacity 3: File > Export Other > Export
+   Labels]. In the dialog, enter the file name `labels`, keep the file type
+   **Text file (*.txt)**, choose the song folder, tick the label track under
+   **Included label tracks**, and press **Export**.
 
 A label at one point is enough. If you drag a region from the attack to the
 end of the sound, the end time is stored too. End times are optional.
