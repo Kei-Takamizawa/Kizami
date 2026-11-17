@@ -17,7 +17,7 @@ from kizami.generate.place import (  # noqa: E402
     prev_sound_end,
     select,
 )
-from kizami.generate.text import display_to_sung, parse_lyrics  # noqa: E402
+from kizami.generate.text import parse_lyrics  # noqa: E402
 
 HOP = 0.0025
 
@@ -37,12 +37,13 @@ def test_parse_lyrics_skips_tags_and_blank_lines_and_reads_readings(tmp_path):
     assert lines[1]["spans"] == [(0, 1, 0, 2)]
 
 
-def test_display_to_sung_maps_offsets_after_a_reading():
-    line = {"display": "明日へ", "sung": "あしたへ", "spans": [(0, 2, 0, 3)]}
+def test_reading_after_a_kanji_in_the_bar_form_covers_only_its_braces(tmp_path):
+    path = tmp_path / "lyrics.txt"
+    path.write_text("今{日|ひ}\n", encoding="utf-8")
 
-    assert display_to_sung(line, 0) == 0
-    assert display_to_sung(line, 1) == 0  # inside the word: its start
-    assert display_to_sung(line, 2) == 3
+    (line,) = parse_lyrics(path)
+
+    assert (line["display"], line["sung"], line["spans"]) == ("今日", "今ひ", [(1, 2, 1, 2)])
 
 
 @pytest.mark.parametrize(
@@ -67,14 +68,20 @@ def _vocab():
     return {"[PAD]": 0, "|": 1, **{k: i + 2 for i, k in enumerate(kana)}}
 
 
-def _units(display):
+def _units(display, tmp_path=None):
+    """Units of one line; with ``tmp_path`` the line is read as a lyrics file (readings in braces)."""
     pytest.importorskip("sudachipy")
     pytest.importorskip("sudachidict_core")
     from kizami.generate.text import atoms_for
 
-    lines = [{"display": display, "sung": display, "spans": []}]
+    if tmp_path is None:
+        lines = [{"display": display, "sung": display, "spans": []}]
+    else:
+        (tmp_path / "lyrics.txt").write_text(display + "\n", encoding="utf-8")
+        lines = parse_lyrics(tmp_path / "lyrics.txt")
     atoms, kept_whole = atoms_for(lines, _vocab())
-    return [(display[a["offset"] : a["end"]], "".join(a["kana"])) for a in atoms], atoms, kept_whole
+    shown = lines[0]["display"]
+    return [(shown[a["offset"] : a["end"]], "".join(a["kana"])) for a in atoms], atoms, kept_whole
 
 
 def test_kanji_compound_is_split_per_kanji_with_its_reading():
@@ -99,6 +106,13 @@ def test_irregular_reading_keeps_the_compound_whole():
 
     assert units == [("今日", "きょう"), ("も", "も")]
     assert kept_whole == 1
+
+
+def test_given_reading_is_used_and_the_rest_of_the_word_keeps_its_own(tmp_path):
+    assert _units("{大|だい}好きで", tmp_path)[0] == [("大", "だい"), ("好", "す"), ("き", "き"), ("で", "で")]
+    units = _units("今{日|ひ}", tmp_path)[0]
+    assert [u[0] for u in units] == ["今", "日"]
+    assert units[1] == ("日", "ひ")
 
 
 # ---------------------------------------------------------- chunk start rules
@@ -262,12 +276,50 @@ def test_generate_reports_missing_inputs(tmp_path):
     with pytest.raises(GenerateError, match="kana model"):
         generate(tmp_path, model_dir=tmp_path)
 
-    (tmp_path / "w2v2-hiragana").mkdir()
-    (tmp_path / "w2v2-hiragana" / "vocab.json").write_text(json.dumps(_vocab()), encoding="utf-8")
+    model = tmp_path / "w2v2-hiragana"
+    model.mkdir()
+    (model / "vocab.json").write_text(json.dumps(_vocab()), encoding="utf-8")
+    with pytest.raises(GenerateError, match="config.json"):
+        generate(tmp_path, model_dir=tmp_path)
+
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"")
     with pytest.raises(GenerateError, match="second model"):
         generate(tmp_path, model_dir=tmp_path, mms="on")
     with pytest.raises(GenerateError, match="levels"):
         generate(tmp_path, model_dir=tmp_path, levels=["big"])
+
+
+def test_vocabulary_without_a_blank_token_is_refused(tmp_path):
+    pytest.importorskip("torch")
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("あ\n", encoding="utf-8")
+    model = tmp_path / "w2v2-hiragana"
+    model.mkdir()
+    (model / "vocab.json").write_text(json.dumps({"<pad>": 0, "あ": 1}), encoding="utf-8")
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"")
+
+    with pytest.raises(GenerateError, match=r"\[PAD\]"):
+        generate(tmp_path, model_dir=tmp_path, mms="off")
+
+
+def test_written_start_times_are_never_negative(tmp_path):
+    from kizami.generate import _write_level
+    from kizami.timing import load_document
+
+    lines = [{"display": "あい"}]
+    chosen = [
+        {"line": 0, "offset": 0, "time": -0.02, "snapped": False},
+        {"line": 0, "offset": 1, "time": 0.5, "snapped": True},
+    ]
+
+    result = _write_level(tmp_path, "sho", lines, chosen, {"lag": -0.02})
+
+    doc = load_document(result.timing)
+    assert [c.start_ms for c in doc.lines[0].chunks] == [0, 500]
+    assert result.uncertain == 1
+    assert (tmp_path / "auto_labels_sho.txt").read_text(encoding="utf-8").startswith("0.000000\t0.000000\t?あ")
 
 
 def test_cli_generate_needs_a_folder_and_a_model_folder(tmp_path, monkeypatch, capsys):

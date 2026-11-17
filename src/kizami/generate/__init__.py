@@ -124,7 +124,8 @@ def generate(
     out = Path(out_dir) if out_dir else (base if base is not None else vocals_path.parent)
     model_root = Path(model_dir)
     kana_dir = model_root / KANA_MODEL
-    _need_file(kana_dir / "vocab.json", "kana model (w2v2-hiragana/vocab.json in the model folder)")
+    for name in ("vocab.json", "config.json", "model.safetensors"):
+        _need_file(kana_dir / name, f"kana model (w2v2-hiragana/{name} in the model folder)")
     mms_file = model_root / MMS_MODEL
     if mms == "on":
         _need_file(mms_file, "second model (mms_fa/model.pt in the model folder)")
@@ -147,7 +148,12 @@ def generate(
     if p["anchor"] not in ("prev-end", "attack"):
         raise GenerateError('anchor must be "prev-end" or "attack"')
 
-    vocab = json.loads((kana_dir / "vocab.json").read_text(encoding="utf-8"))
+    try:
+        vocab = json.loads((kana_dir / "vocab.json").read_text(encoding="utf-8"))
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise GenerateError(f"{kana_dir / 'vocab.json'}: not a JSON vocabulary ({exc})") from exc
+    if not isinstance(vocab, dict) or "[PAD]" not in vocab:
+        raise GenerateError(f"{kana_dir / 'vocab.json'}: no [PAD] token; is this the hiragana wav2vec2 model?")
     say("reading the lyrics")
     try:
         lines = text.parse_lyrics(lyrics_path)
@@ -161,7 +167,9 @@ def generate(
         x, sr = audio.load_mono(vocals_path)
     except audio.AudioError as exc:
         raise GenerateError(str(exc)) from exc
-    cache_dir = Path(cache) if cache else None
+    audio_key = None
+    if cache:
+        audio_key = Path(cache) / f"{vocals_path.stem}-{align.fingerprint(vocals_path.read_bytes())}"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
@@ -169,14 +177,22 @@ def generate(
         except audio.AudioError as exc:
             raise GenerateError(str(exc)) from exc
         say("aligning the lyrics (kana model)")
-        em = align.kana_emissions(pcm16k, kana_dir, vocals_path, cache_dir)
+        key = Path(f"{audio_key}-kana-{align.kana_model_key(kana_dir)}.npy") if audio_key else None
+        try:
+            em = align.kana_emissions(pcm16k, kana_dir, key)
+        except (OSError, ValueError) as exc:
+            raise GenerateError(f"the kana model could not be loaded from {kana_dir} ({exc})") from exc
         try:
             align.ctc_align(em, atoms, vocab)
         except RuntimeError as exc:
             raise GenerateError(f"the lyrics could not be aligned to the audio ({exc}). Is it the right song?") from exc
         if use_mms:
             say("aligning the lyrics (second model)")
-            em2 = align.mms_emissions(pcm16k, mms_file, vocals_path, cache_dir)
+            key = Path(f"{audio_key}-mms-{align.mms_model_key(mms_file)}.npy") if audio_key else None
+            try:
+                em2 = align.mms_emissions(pcm16k, mms_file, key)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise GenerateError(f"the second model could not be loaded from {mms_file} ({exc})") from exc
             try:
                 align.mms_align(em2, atoms)
             except RuntimeError as exc:
@@ -216,7 +232,7 @@ def _write_level(out: Path, level: str, lines, chosen, p) -> LevelResult:
     for chunks in chunks_for(lines, chosen):
         if chunks:
             doc_lines.append(
-                Line(chunks=tuple(Chunk(text=t, start_ms=int(round(s * 1000)), uncertain=u) for t, s, u in chunks))
+                Line(chunks=tuple(Chunk(text=t, start_ms=max(0, int(round(s * 1000))), uncertain=u) for t, s, u in chunks))
             )
     if not doc_lines:
         raise GenerateError("no chunk could be placed")

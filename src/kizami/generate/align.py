@@ -61,11 +61,23 @@ def romaji(kana: list[str]) -> str:
     return out
 
 
-def _cache_file(cache: Path | None, audio_path: Path, tag: str) -> Path | None:
-    if cache is None:
-        return None
-    digest = hashlib.sha256(Path(audio_path).read_bytes()).hexdigest()[:16]
-    return Path(cache) / f"{Path(audio_path).stem}-{digest}-{tag}.npy"
+def fingerprint(*parts: bytes | str | int) -> str:
+    """Short hash of the given parts, for naming cache files."""
+    h = hashlib.sha256()
+    for part in parts:
+        h.update(part if isinstance(part, bytes) else str(part).encode("utf-8"))
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
+
+def kana_model_key(model_dir: Path) -> str:
+    """Identifies the kana model: its vocabulary, its settings and the size of its weights."""
+    d = Path(model_dir)
+    return fingerprint((d / "vocab.json").read_bytes(), (d / "config.json").read_bytes(), (d / "model.safetensors").stat().st_size)
+
+
+def mms_model_key(model_file: Path) -> str:
+    return fingerprint(Path(model_file).stat().st_size)
 
 
 def _run_pieces(audio: np.ndarray, forward) -> np.ndarray:
@@ -84,9 +96,8 @@ def _run_pieces(audio: np.ndarray, forward) -> np.ndarray:
     return np.concatenate(outs)[:n_frames]
 
 
-def kana_emissions(audio: np.ndarray, model_dir: Path, audio_path: Path, cache: Path | None = None) -> np.ndarray:
-    """Per 20 ms frame, log-probabilities of every kana of the kana model."""
-    key = _cache_file(cache, audio_path, "kana")
+def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) -> np.ndarray:
+    """Per 20 ms frame, log-probabilities of every kana of the kana model. ``key``: cache file."""
     if key is not None and key.exists():
         return np.load(key)
     import torch
@@ -142,9 +153,8 @@ def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
     return len(ids)
 
 
-def mms_emissions(audio: np.ndarray, model_file: Path, audio_path: Path, cache: Path | None = None) -> np.ndarray:
+def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None) -> np.ndarray:
     """Per 20 ms frame, log-probabilities of the MMS letters (model file read from disk, never downloaded)."""
-    key = _cache_file(cache, audio_path, "mms")
     if key is not None and key.exists():
         return np.load(key)
     import torch

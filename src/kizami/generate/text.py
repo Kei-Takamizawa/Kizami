@@ -20,7 +20,7 @@ import unicodedata
 from pathlib import Path
 
 TAG = re.compile(r"^\[[^\]]+\]$")
-OVERRIDE = re.compile(r"\{([^{}|]+)\|([^{}]+)\}|([㐀-鿿々〆ヶ]+)\{([^{}]+)\}")
+OVERRIDE = re.compile(r"\{([^{}|]+)\|([^{}]+)\}|([㐀-鿿々〆ヶ]+)\{([^{}|]+)\}")
 DEPENDENT_POS = {"助詞", "助動詞", "接尾辞"}
 SKIP_POS = {"補助記号", "空白"}
 # No attack of their own: small kana, long mark, geminate.
@@ -62,19 +62,6 @@ def norm_char(c: str) -> str:
     """The character in comparable form, or "" for punctuation and spaces."""
     c = unicodedata.normalize("NFKC", c).casefold()
     return c if c and c[0].isalnum() else ""
-
-
-def display_to_sung(line: dict, i: int) -> int:
-    """Offset in the sung text of the display character at offset ``i``."""
-    shift = 0
-    for ds, de, ss, se in line["spans"]:
-        if i >= de:
-            shift = se - de
-        elif i > ds:
-            return ss
-        else:
-            break
-    return i + shift
 
 
 def kata_to_hira(s: str) -> str:
@@ -205,7 +192,10 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
     """
     from sudachipy import dictionary, tokenizer
 
-    tok = dictionary.Dictionary().tokenizer()
+    dic = dictionary.Dictionary()
+    if not _LEXICON:
+        _LEXICON.append(dic)  # kanji_readings looks single kanji up in the same dictionary
+    tok = dic.tokenizer()
     mode_c, mode_a = tokenizer.Tokenizer.SplitMode.C, tokenizer.Tokenizer.SplitMode.A
     atoms = []
     guesses = 0
@@ -213,48 +203,65 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
     def kana_tokens(reading):
         return [c for c in kata_to_hira(reading) if c in vocab and c != "|"]
 
+    def plain_units(pieces, shift):
+        """Units of dictionary words (mode A pieces) whose offsets are ``shift`` from the line start."""
+        nonlocal guesses
+        units = []
+        for u in pieces:
+            surf = u.surface()
+            b0 = u.begin() + shift
+            if not norm_char(surf[:1] or " "):
+                continue
+            if surf.isascii():
+                n = max(1, len(re.findall(r"[aeiouy]+", surf.lower())))
+                units.append((b0, b0 + len(surf), ["*"] * n))
+                continue
+            reading = kata_to_hira(u.reading_form())
+            parts = furigana_atoms(surf, reading)
+            if parts is None:
+                units.append((b0, b0 + len(surf), kana_tokens(reading)))
+                continue
+            for pa, pb, k in parts:
+                run = surf[pa:pb]
+                if pb - pa >= 2 and all(is_kanji(c) for c in run):
+                    pieces_k, guess = split_kanji_reading(tok, run, k)
+                    guesses += guess
+                    if guess:  # irregular reading (for example 今日): keep the compound whole
+                        pieces_k = [(run, k)]
+                    for j, (_, r) in enumerate(pieces_k):
+                        units.append((b0 + pa + j, b0 + pa + j + 1, kana_tokens(r)))
+                    if len(pieces_k) == 1:
+                        units[-1] = (b0 + pa, b0 + pb, kana_tokens(k))
+                else:
+                    units.append((b0 + pa, b0 + pb, kana_tokens(k)))
+        return units
+
     for li, line in enumerate(lines):
         line_atoms, first, done_spans = [], True, set()
         for m in tok.tokenize(line["display"], mode_c):
             pos = m.part_of_speech()[0]
             if pos in SKIP_POS or not norm_char(m.surface()[:1] or " "):
                 continue
+            spans = [sp for sp in line["spans"] if sp[0] < m.end() and sp[1] > m.begin()]
+            if not spans:
+                units = plain_units(m.split(mode_a) or [m], 0)
+            else:
+                # a given reading inside or across this word: the reading for its span,
+                # the dictionary for the text around it
+                units, at = [], m.begin()
+                for sp in spans:
+                    if at < sp[0]:
+                        units += plain_units(tok.tokenize(line["display"][at : sp[0]], mode_a), at)
+                    if sp not in done_spans:
+                        done_spans.add(sp)
+                        units.append((sp[0], sp[1], kana_tokens(line["sung"][sp[2] : sp[3]])))
+                    at = max(at, sp[1])
+                if at < m.end():
+                    units += plain_units(tok.tokenize(line["display"][at : m.end()], mode_a), at)
+                if not units:
+                    continue  # the rest of a word with a given reading, already done
             flags = {"word_start": True, "dependent": pos in DEPENDENT_POS and not first, "line_first": first}
             first = False
-            span = next((sp for sp in line["spans"] if sp[0] <= m.begin() < sp[1]), None)
-            if span:
-                if span in done_spans:
-                    continue
-                done_spans.add(span)
-                units = [(span[0], span[1], kana_tokens(line["sung"][span[2] : span[3]]))]
-            else:
-                units = []
-                for u in m.split(mode_a) or [m]:
-                    surf = u.surface()
-                    if not norm_char(surf[:1] or " "):
-                        continue
-                    if surf.isascii():
-                        n = max(1, len(re.findall(r"[aeiouy]+", surf.lower())))
-                        units.append((u.begin(), u.end(), ["*"] * n))
-                        continue
-                    reading = kata_to_hira(u.reading_form())
-                    parts = furigana_atoms(surf, reading)
-                    if parts is None:
-                        units.append((u.begin(), u.end(), kana_tokens(reading)))
-                        continue
-                    for pa, pb, k in parts:
-                        run = surf[pa:pb]
-                        if pb - pa >= 2 and all(is_kanji(c) for c in run):
-                            pieces, guess = split_kanji_reading(tok, run, k)
-                            guesses += guess
-                            if guess:  # irregular reading (for example 今日): keep the compound whole
-                                pieces = [(run, k)]
-                            for j, (_, r) in enumerate(pieces):
-                                units.append((u.begin() + pa + j, u.begin() + pa + j + 1, kana_tokens(r)))
-                            if len(pieces) == 1:
-                                units[-1] = (u.begin() + pa, u.begin() + pb, kana_tokens(k))
-                        else:
-                            units.append((u.begin() + pa, u.begin() + pb, kana_tokens(k)))
             m_first = len(line_atoms)
             for b, e, kana in units:
                 surf = kata_to_hira(line["display"][b:e])
