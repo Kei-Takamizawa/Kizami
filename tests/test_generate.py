@@ -13,7 +13,9 @@ from kizami.generate.place import (  # noqa: E402
     chu_threshold,
     chunks_for,
     fused_rough,
+    mora_groups,
     place,
+    place_morae,
     prev_sound_end,
     select,
 )
@@ -259,9 +261,74 @@ def test_levels_share_times_and_differ_in_which_units_start_a_chunk():
     chu = chunks_for(lines, select(atoms, "chu", m_thr))
     sho = chunks_for(lines, select(atoms, "sho", m_thr))
 
-    assert dai == [[("「あいうえ」", 1.0, False)]]
-    assert chu == [[("「あ", 1.0, False), ("いうえ」", 1.2, False)]]
-    assert sho == [[("「あ", 1.0, False), ("い", 1.2, False), ("う", 1.4, False), ("え」", 1.6, True)]]
+    assert dai == [[("「あいうえ」", 1.0, False, [])]]
+    assert chu == [[("「あ", 1.0, False, []), ("いうえ」", 1.2, False, [])]]
+    assert sho == [[("「あ", 1.0, False, []), ("い", 1.2, False, []), ("う", 1.4, False, []), ("え」", 1.6, True, [])]]
+
+
+def test_mora_groups_keep_small_kana_with_the_kana_before():
+    assert mora_groups(["ね", "が"]) == [("ね", 0), ("が", 1)]
+    assert mora_groups(["き", "ょ", "う"]) == [("きょ", 0), ("う", 2)]
+    assert mora_groups(["が", "っ", "こ", "ー"]) == [("がっ", 0), ("こー", 2)]
+
+
+def _placed(kana, kana_starts, time, onset, line=0, offset=0):
+    return {
+        "kana": kana,
+        "kana_starts": kana_starts,
+        "time": time,
+        "onset": onset,
+        "snapped": True,
+        "strength": 3.0,
+        "shift": 0.0,
+        "line": line,
+        "offset": offset,
+        "word_start": True,
+        "dependent": False,
+        "line_first": offset == 0,
+    }
+
+
+def test_a_later_mora_snaps_to_its_own_attack_inside_the_unit():
+    first = _placed(["ね", "が"], [1.00, 1.30], 0.98, 1.00)
+    second = _placed(["い"], [1.70], 1.66, 1.68, offset=1)
+    onsets, strengths = [1.00, 1.33, 1.68], [3.0, 6.0, 3.0]
+
+    place_morae([first, second], onsets, strengths, dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+
+    assert first["morae"][0] == ("ね", 0.98, True)
+    kana, start, snapped = first["morae"][1]
+    assert (kana, snapped) == ("が", True)
+    assert start == pytest.approx(1.33)  # aligned at 1.28, the attack is at 1.33
+    assert second["morae"] == [("い", 1.66, True)]
+
+
+def test_a_mora_without_room_stays_between_its_neighbours():
+    first = _placed(["ね", "が"], [1.00, 1.50], 0.98, 1.00)  # aligned after the next unit
+    second = _placed(["い"], [1.20], 1.10, 1.12, offset=1)
+
+    place_morae([first, second], [1.00, 1.12], [3.0, 3.0], dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+
+    _, start, snapped = first["morae"][1]
+    assert not snapped
+    assert 0.98 + 0.03 <= start <= 1.10 - 0.03
+
+
+def test_chunks_list_the_morae_of_all_their_units():
+    lines = [{"display": "願い"}]
+    first = _placed(["ね", "が"], [1.00, 1.30], 0.98, 1.00)
+    second = _placed(["い"], [1.70], 1.66, 1.68, offset=1)
+    second["word_start"] = False
+    first["morae"] = [("ね", 0.98, True), ("が", 1.31, False)]
+    second["morae"] = [("い", 1.66, True)]
+    atoms = [first, second]
+
+    (dai,) = chunks_for(lines, select(atoms, "dai", 99.0), atoms)
+    sho = chunks_for(lines, select(atoms, "sho", 99.0), atoms)[0]
+
+    assert dai == [("願い", 0.98, False, [("ね", 0.98, False), ("が", 1.31, True), ("い", 1.66, False)])]
+    assert sho[0][3] == [("ね", 0.98, False), ("が", 1.31, True)]
+    assert sho[1][3] == []  # a single mora needs no list
 
 
 # -------------------------------------------------------------- entry points
@@ -302,6 +369,21 @@ def test_vocabulary_without_a_blank_token_is_refused(tmp_path):
 
     with pytest.raises(GenerateError, match=r"\[PAD\]"):
         generate(tmp_path, model_dir=tmp_path, mms="off")
+
+
+def test_morae_are_written_to_the_timing_file(tmp_path):
+    from kizami.generate import _write_level
+    from kizami.timing import Mora, load_document
+
+    lines = [{"display": "願"}]
+    unit = _placed(["ね", "が"], [1.00, 1.30], 0.98, 1.00)
+    unit["morae"] = [("ね", 0.98, True), ("が", 1.3304, False)]
+
+    result = _write_level(tmp_path, "sho", lines, [unit], {}, [unit])
+
+    (chunk,) = load_document(result.timing).lines[0].chunks
+    assert chunk.morae == (Mora("ね", 980), Mora("が", 1330, uncertain=True))
+    assert "が" not in (tmp_path / "auto_labels_sho.txt").read_text(encoding="utf-8")
 
 
 def test_written_start_times_are_never_negative(tmp_path):

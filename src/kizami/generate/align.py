@@ -120,7 +120,8 @@ def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) 
 
 
 def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
-    """Set ``rough`` (first kana), ``rough_last`` (last kana) and ``conf`` on each unit. Returns the kana count.
+    """Set ``rough`` (first kana), ``rough_last`` (last kana), ``kana_starts`` (every kana) and ``conf``
+    on each unit. Returns the kana count.
 
     ``*`` (one Latin syllable) is aligned to an extra "anything but silence" token.
     """
@@ -139,6 +140,7 @@ def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
     for a in atoms:
         a["rough"] = a["rough_last"] = None
         a["conf"] = 1.0
+        a["kana_starts"] = []
     if not ids:
         return 0
     aligned, scores = F.forced_align(torch.from_numpy(em)[None], torch.tensor([ids], dtype=torch.int32), blank=blank)
@@ -149,6 +151,7 @@ def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
         if atoms[ai]["rough"] is None:
             atoms[ai]["rough"] = sp.start * STRIDE / SR
         atoms[ai]["rough_last"] = sp.start * STRIDE / SR
+        atoms[ai]["kana_starts"].append(sp.start * STRIDE / SR)
         atoms[ai]["conf"] = min(atoms[ai]["conf"], float(sp.score))  # weakest kana of the unit
     return len(ids)
 

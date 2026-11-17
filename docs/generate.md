@@ -68,6 +68,15 @@ with no clear attack of its own is `uncertain` in the JSON and starts with
 
 The same character has the same start time at every level.
 
+Each chunk with two or more morae also lists when every mora starts
+(`morae` in the JSON, not in the label files). This gives times inside a kanji
+that is never split, such as the が of `願`: the mora's aligned time snaps to
+an attack between the previous mora and the next unit, with the same
+start rule as a chunk. In a check on 1,075 pairs of neighbouring kana in the
+four songs, timed this way as if they were one unit, the second kana was
+within 50 ms of the owner's time as often as when timed as its own unit
+(91.8%). Times inside real kanji have no reference yet.
+
 ## How a chunk start is chosen
 
 1. **Units.** The lyrics are split into units with SudachiPy. A kanji gets

@@ -157,6 +157,7 @@ def place(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
         r, r_last = rough[ai]
         if r is None:
             continue
+        a["shift"] = r - a["rough"]  # nonzero where the second aligner's time is used
         c = r + p["lag"]
         lo, hi = c - p["before"], c + p["after"]
         while oi < len(onsets) and onsets[oi] < lo - 1.0:
@@ -195,6 +196,71 @@ def place(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
     return n_mms
 
 
+# Kana without an attack of their own: they belong to the mora before them.
+MORA_ATTACH = set("ゃゅょぁぃぅぇぉゎっー")
+MORA_MIN = 0.03  # smallest time between two mora starts inside a unit (s)
+
+
+def mora_groups(kana):
+    """``[(kana text, index of its first kana), ...]``: one entry per mora that can carry an attack."""
+    groups = []
+    for i, k in enumerate(kana):
+        if groups and k in MORA_ATTACH:
+            groups[-1][0] += k
+        else:
+            groups.append([k, i])
+    return [(text, i) for text, i in groups]
+
+
+def place_morae(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
+    """Set ``morae`` on each placed unit: ``[(kana, start time, has an attack), ...]``.
+
+    The first mora starts with the unit. A later mora (the が of 願) is found
+    like a unit: its aligned time snaps to the best attack nearby, and its start
+    is the end of the sound before it. It stays inside its unit: after the
+    previous mora and before the next unit.
+    """
+    onsets, strengths = np.asarray(onsets), np.asarray(strengths)
+    timed = [a for a in atoms if a.get("time") is not None]
+    for n, a in enumerate(timed):
+        groups = mora_groups(a["kana"])
+        a["morae"] = [(groups[0][0], a["time"], a["snapped"])] if groups else []
+        if len(groups) < 2 or len(a.get("kana_starts", ())) != len(a["kana"]):
+            continue
+        nxt = timed[n + 1] if n + 1 < len(timed) else None
+        next_time = nxt["time"] if nxt else math.inf
+        next_onset = nxt["onset"] if nxt else math.inf
+        prev_on, prev_t = a["onset"], a["time"]
+        for g, (text, i) in enumerate(groups[1:], start=1):
+            c = a["kana_starts"][i] + a.get("shift", 0.0) + p["lag"]
+            best, best_score = None, 0.0
+            k0 = int(np.searchsorted(onsets, c - p["before"]))
+            k1 = int(np.searchsorted(onsets, c + p["after"], "right"))
+            for k in range(k0, k1):
+                t = onsets[k]
+                if t <= prev_on + p["min_gap"] or t >= next_onset - p["min_gap"]:
+                    continue
+                score = strengths[k] * math.exp(-abs(t - c) / p["tau"])
+                if score > best_score:
+                    best, best_score = k, score
+            t = float(onsets[best]) if best is not None else c
+            if text[0] in SIBILANT:
+                h = hiss_start(hiss, fps, t, prev_on + p["min_gap"])
+                if h is not None and h < t:
+                    t = h
+            start = t
+            if env is not None:
+                start = min(t, max(prev_sound_end(env, tt, t, prev_on, p)[0], prev_t + p["min_gap"]))
+            left = len(groups) - g  # morae still to place, this one included
+            lo, hi = prev_t + MORA_MIN, next_time - MORA_MIN * left
+            if lo >= hi:  # no room: share what is left evenly
+                start = prev_t + (min(next_time, prev_t + 1.0) - prev_t) / (left + 1)
+            else:
+                start = min(max(start, lo), hi)
+            a["morae"].append((text, start, best is not None))
+            prev_on, prev_t = max(t, start), start
+
+
 def is_word_start(a) -> bool:
     """Level dai keeps a unit that starts a line, or a word that is not a particle or auxiliary."""
     return a["line_first"] or (a["word_start"] and not a["dependent"])
@@ -223,12 +289,16 @@ def select(atoms, level, m_thr):
     return out
 
 
-def chunks_for(lines, chosen):
-    """Per lyric line, the chunks as (text, start time in s, uncertain).
+def chunks_for(lines, chosen, atoms=None):
+    """Per lyric line, the chunks as (text, start time in s, uncertain, morae).
 
     A chunk runs from its unit to the next chosen unit of the same line.
     Text before a line's first chosen unit (such as an opening bracket) joins it.
+    ``morae`` lists (kana, start time, uncertain) for every mora of the units
+    in the chunk when ``atoms`` (all units, with ``morae`` set) is given and the
+    chunk has two or more morae; otherwise it is empty.
     """
+    index = {id(a): i for i, a in enumerate(atoms or [])}
     out_lines = [[] for _ in lines]
     for i, a in enumerate(chosen):
         nxt = chosen[i + 1] if i + 1 < len(chosen) and chosen[i + 1]["line"] == a["line"] else None
@@ -238,5 +308,15 @@ def chunks_for(lines, chosen):
             text = disp[: a["offset"]].strip() + text
         if not text:
             continue
-        out_lines[a["line"]].append((text, a["time"], not a["snapped"]))
+        morae = []
+        if atoms is not None and id(a) in index:
+            j = index[id(a)]
+            stop = index[id(nxt)] if nxt is not None else len(atoms)
+            for u in atoms[j:stop]:
+                if u["line"] != a["line"]:
+                    break
+                morae += [(k, t, not s) for k, t, s in u.get("morae", ())]
+            if len(morae) < 2 or any(k == "*" for k, _, _ in morae):
+                morae = []
+        out_lines[a["line"]].append((text, a["time"], not a["snapped"], morae))
     return out_lines

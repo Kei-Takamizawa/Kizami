@@ -202,6 +202,7 @@ def generate(
         hiss, fps = audio.hiss_frames(x, sr)
         env, tt = audio.envelope(x, sr) if p["anchor"] == "prev-end" else (None, None)
     n_mms = place.place(atoms, onsets, strengths, p, hiss, fps, env, tt)
+    place.place_morae(atoms, onsets, strengths, p, hiss, fps, env, tt)
     p["m_thr"] = place.chu_threshold(atoms, p["m_share"])
 
     timed = [a for a in atoms if a["time"] is not None]
@@ -219,20 +220,34 @@ def generate(
     )
     out.mkdir(parents=True, exist_ok=True)
     for level in levels:
-        result.levels.append(_write_level(out, level, lines, place.select(atoms, level, p["m_thr"]), p))
+        result.levels.append(_write_level(out, level, lines, place.select(atoms, level, p["m_thr"]), p, atoms))
     return result
 
 
-def _write_level(out: Path, level: str, lines, chosen, p) -> LevelResult:
+def _ms(seconds: float) -> int:
+    return max(0, int(round(seconds * 1000)))
+
+
+def _write_level(out: Path, level: str, lines, chosen, p, atoms=None) -> LevelResult:
     from kizami.audacity import label_text_from_document
     from kizami.generate.place import chunks_for
-    from kizami.timing import Chunk, Line, TimingDocument, save_document
+    from kizami.timing import Chunk, Line, Mora, TimingDocument, save_document
 
     doc_lines = []
-    for chunks in chunks_for(lines, chosen):
+    for chunks in chunks_for(lines, chosen, atoms):
         if chunks:
             doc_lines.append(
-                Line(chunks=tuple(Chunk(text=t, start_ms=max(0, int(round(s * 1000))), uncertain=u) for t, s, u in chunks))
+                Line(
+                    chunks=tuple(
+                        Chunk(
+                            text=t,
+                            start_ms=_ms(s),
+                            uncertain=u,
+                            morae=tuple(Mora(kana=k, start_ms=_ms(ms), uncertain=mu) for k, ms, mu in morae),
+                        )
+                        for t, s, u, morae in chunks
+                    )
+                )
             )
     if not doc_lines:
         raise GenerateError("no chunk could be placed")

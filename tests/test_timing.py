@@ -5,6 +5,7 @@ import pytest
 from kizami.timing import (
     Chunk,
     Line,
+    Mora,
     TimingDocument,
     TimingFormatError,
     document_from_dict,
@@ -124,6 +125,18 @@ def test_save_then_load_returns_equal_document(tmp_path):
             lambda d: d["lines"][0]["chunks"][0].update(uncertain="yes"),
             "lines[0].chunks[0].uncertain",
         ),
+        (
+            lambda d: d["lines"][0]["chunks"][0].update(morae={"kana": "あ"}),
+            "lines[0].chunks[0].morae",
+        ),
+        (
+            lambda d: d["lines"][0]["chunks"][0].update(morae=[{"kana": "", "start_ms": 1}]),
+            "lines[0].chunks[0].morae[0].kana",
+        ),
+        (
+            lambda d: d["lines"][0]["chunks"][0].update(morae=[{"kana": "あ", "start_ms": -1}]),
+            "lines[0].chunks[0].morae[0].start_ms",
+        ),
     ],
 )
 def test_document_from_dict_rejects_invalid_input_and_names_the_field(mutate, message_part):
@@ -169,3 +182,16 @@ def test_document_from_dict_ignores_unknown_fields():
     doc = document_from_dict(data)
 
     assert doc.lines[0].chunks[0].text == "夜空を"
+
+
+def test_morae_round_trip_and_are_omitted_when_empty(tmp_path):
+    chunk = Chunk("願い", 1000, morae=(Mora("ね", 1000), Mora("が", 1180, uncertain=True), Mora("い", 1400)))
+    doc = TimingDocument(lines=(Line(chunks=(chunk, Chunk("を", 1600))),))
+    path = tmp_path / "t.json"
+
+    save_document(doc, path)
+
+    assert load_document(path) == doc
+    data = document_to_dict(doc)["lines"][0]["chunks"]
+    assert data[0]["morae"][1] == {"kana": "が", "start_ms": 1180, "uncertain": True}
+    assert "morae" not in data[1]
