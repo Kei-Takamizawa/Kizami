@@ -4,15 +4,17 @@ Kizami makes timed lyrics for Japanese songs, for karaoke-style lyric
 players. Each piece of text lights up at the moment the singer starts to
 sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
 
-> **Status: early development.** Kizami cannot generate timed lyrics yet.
-> This version contains the tools that measure timing accuracy. The
-> generator is built next and is tested with these tools.
+> **Status: early development.** `kizami generate` makes chunk timing from a
+> separated vocal track and a lyrics file, and `kizami tagger` lets you
+> correct it. Export to lyric-player formats (TTML, LRC) is not built yet.
 
 ## What makes it different
 
 - **Timing follows the voice.** Text changes at the vocal attack, not at
   grammar boundaries.
-- **Words stay whole.** A word such as `夜空` is never split in the middle.
+- **Three chunk sizes.** Words with their particles (`夜空を`), words plus
+  the strong attacks inside them, or every character (`夜`, `空`, `を`). The
+  same character starts at the same time in all three.
 - **Everything runs on your computer.** You give Kizami a song file and a
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
@@ -56,6 +58,30 @@ Measure how close a timing file is to a hand-made reference.
    share of generated chunk starts that are correct. The targets are 85% and
    80%.
 
+## Generate timing
+
+`kizami generate` reads a song folder that holds `vocals.wav` (the vocal
+track, separated from the mix beforehand) and `lyrics.txt`, and writes the
+timing at three levels next to them:
+
+| Level | Files | One chunk is |
+|---|---|---|
+| `dai` | `auto_dai.json`, `auto_labels_dai.txt` | a word with its particles |
+| `chu` | `auto_chu.json`, `auto_labels_chu.txt` | `dai` plus the strongest attacks inside words |
+| `sho` | `auto_sho.json`, `auto_labels_sho.txt` | every character with a sound of its own |
+
+```
+pip install -e ".[generate]"
+kizami generate path/to/song-folder --model-dir path/to/models
+```
+
+It needs the `ffmpeg` program and about 2.5 GB of model files, which you
+download once into the model folder (or set `KIZAMI_MODEL_DIR` to it). A song
+takes about 40 seconds on an Apple silicon Mac. Open the label files in
+`kizami tagger` or Audacity to review them; a `?` before the text means no
+clear attack was found for that chunk. See [Generating timing](docs/generate.md)
+for the model setup and how a chunk start is chosen.
+
 ## Tag timing by tapping
 
 `kizami tagger` opens a window in your browser where you tag lyric timing the
@@ -77,6 +103,8 @@ result is saved in the same folder as `tagger_labels.txt`, which
 
 - [Design](docs/design.md): goals, definitions, evaluation method, planned
   pipeline.
+- [Generating timing](docs/generate.md): model setup, options, how a chunk
+  start is chosen, measured accuracy.
 - [Timing JSON format](docs/timing-json-format.md)
 - [Labelling guide](docs/labeling-guide.md)
 - [Tagger guide](docs/tagger.md)
