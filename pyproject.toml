@@ -12,7 +12,8 @@ license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+audio = ["numpy>=1.26"]
+dev = ["pytest>=8", "numpy>=1.26"]
 
 [project.scripts]
 kizami = "kizami.cli:main"
