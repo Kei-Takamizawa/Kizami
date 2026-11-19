@@ -1,6 +1,6 @@
 import pytest
 
-from kizami.datasets import DatasetError, jamendo_reference
+from kizami.datasets import DatasetError, csd_reference, jamendo_reference
 from kizami.sweep import parse_param
 
 
@@ -41,6 +41,56 @@ def test_cli_import_ref_writes_a_reference(tmp_path, capsys):
     main(["import-ref", "--format", "jamendo", str(csv), "--words", str(words), "--lyrics", str(lyrics), "-o", str(tmp_path / "ref.json")])
     assert len(load_document(tmp_path / "ref.json").lines) == 2
     assert "6 chunks" in capsys.readouterr().out
+
+
+def _csd(tmp_path, lyrics="가나 다\n라마\n", rows=None):
+    rows = rows if rows is not None else [(1.0, 1.4, 60, "가"), (1.5, 1.9, 62, "나"), (2.0, 2.8, 64, "다"),
+                                          (4.0, 4.5, 60, "라"), (4.5, 5.25, 59, "마")]  # fmt: skip
+    (tmp_path / "kr.txt").write_text(lyrics, encoding="utf-8")
+    csv = "start,end,pitch,syllable\n" + "".join(f"{a},{b},{c},{d}\n" for a, b, c, d in rows)
+    (tmp_path / "kr.csv").write_text(csv, encoding="utf-8")
+    return tmp_path / "kr.csv", tmp_path / "kr.txt"
+
+
+def test_csd_notes_become_one_chunk_per_hangul_block(tmp_path):
+    doc = csd_reference(*_csd(tmp_path))
+    assert [[c.text for c in line.chunks] for line in doc.lines] == [["가", "나 ", "다"], ["라", "마"]]
+    assert [(c.start_ms, c.end_ms) for c in doc.lines[1].chunks] == [(4000, 4500), (4500, 5250)]
+    assert doc.kind == "reference" and doc.meta["source"] == "csd"
+
+
+def test_csd_rows_without_a_hangul_block_are_skipped(tmp_path):
+    rows = [(0.5, 0.9, 0, ""), (1.0, 1.4, 60, "가"), (1.5, 1.9, 62, "나"), (2.0, 2.8, 64, "다"), (3.0, 3.5, 0, "-"),
+            (4.0, 4.5, 60, "라"), (4.5, 5.25, 59, "마")]  # fmt: skip
+    doc = csd_reference(*_csd(tmp_path, rows=rows))
+    assert sum(len(line.chunks) for line in doc.lines) == 5
+
+
+def test_csd_note_count_must_match_the_blocks(tmp_path):
+    with pytest.raises(DatasetError, match="4 sung syllables but the lyrics have 5"):
+        csd_reference(*_csd(tmp_path, rows=[(1.0, 1.4, 60, "가"), (1.5, 1.9, 62, "나"), (2.0, 2.8, 64, "다"), (4.0, 4.5, 60, "라")]))
+
+
+def test_csd_syllables_must_follow_the_lyrics_and_the_error_shows_no_lyric_text(tmp_path):
+    with pytest.raises(DatasetError, match="syllable 4") as err:
+        csd_reference(*_csd(tmp_path, lyrics="가나 다\n바마\n"))
+    assert not any(c in str(err.value) for c in "가나다라마바")
+
+
+def test_cli_import_ref_reads_csd(tmp_path, capsys):
+    from kizami.cli import main
+
+    csv, lyrics = _csd(tmp_path)
+    main(["import-ref", "--format", "csd", str(csv), "--lyrics", str(lyrics), "-o", str(tmp_path / "ref.json")])
+    assert "5 chunks" in capsys.readouterr().out
+
+
+def test_cli_import_ref_jamendo_needs_the_word_list(tmp_path):
+    from kizami.cli import main
+
+    csv, _, lyrics = _jamendo(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["import-ref", "--format", "jamendo", str(csv), "--lyrics", str(lyrics), "-o", str(tmp_path / "ref.json")])
 
 
 @pytest.mark.parametrize(

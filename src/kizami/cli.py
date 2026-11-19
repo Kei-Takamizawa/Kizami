@@ -96,13 +96,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
     import_ref = commands.add_parser(
         "import-ref",
-        help="make a reference timing file from a public dataset (JamendoLyrics)",
+        help="make a reference timing file from a public dataset (JamendoLyrics, CSD)",
         description="Make a reference timing JSON from a public dataset, for kizami eval.",
     )
-    import_ref.add_argument("times", help="word times (JamendoLyrics: annotations/words/SONG.csv)")
-    import_ref.add_argument("--format", required=True, choices=["jamendo"], help="dataset format")
-    import_ref.add_argument("--words", required=True, help="word list (JamendoLyrics: lyrics/SONG.words.txt)")
-    import_ref.add_argument("--lyrics", required=True, help="lyrics with line breaks (JamendoLyrics: lyrics/SONG.txt)")
+    import_ref.add_argument("times", help="times (JamendoLyrics: annotations/words/SONG.csv; CSD: csv/SONG.csv)")
+    import_ref.add_argument(
+        "--format", required=True, choices=["jamendo", "csd"], help="dataset: jamendo (JamendoLyrics) or csd (Korean CSD)"
+    )
+    import_ref.add_argument("--words", help="word list, JamendoLyrics only (lyrics/SONG.words.txt)")
+    import_ref.add_argument("--lyrics", required=True, help="lyrics with line breaks (JamendoLyrics: lyrics/SONG.txt; CSD: lyric/SONG.txt)")
     import_ref.add_argument("-o", "--output", required=True, help="timing JSON file to write")
 
     import_labels = commands.add_parser(
@@ -255,10 +257,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _run_import_ref(args: argparse.Namespace) -> None:
-    from kizami.datasets import DatasetError, jamendo_reference
+    from kizami.datasets import DatasetError, csd_reference, jamendo_reference
 
+    if args.format == "jamendo" and not args.words:
+        raise SystemExit("error: --words is needed for --format jamendo")
     try:
-        doc = jamendo_reference(args.times, args.words, args.lyrics)
+        if args.format == "csd":
+            doc = csd_reference(args.times, args.lyrics)
+        else:
+            doc = jamendo_reference(args.times, args.words, args.lyrics)
     except (DatasetError, OSError, KeyError, ValueError) as exc:
         raise SystemExit(f"error: {exc}") from exc
     save_document(doc, args.output)
