@@ -53,6 +53,23 @@ so the two can be compared directly.
 | `morae[].kana` | string | yes | The mora as sung, in hiragana, with its small kana, `っ` or `ー` (`きょ`, `がっ`). |
 | `morae[].start_ms` | integer | yes | Start of the mora in milliseconds. The first mora starts with the chunk. |
 | `morae[].uncertain` | boolean | no | `true` when no attack was found for the mora. Default `false`. |
+| `lines[].ruby` | list | no | Furigana: which part of the line text is the reading of which kanji. Written by `kizami generate` when kanji are shown as hiragana; then `meta.ruby` is `true`. Used by `kizami ttml --ruby`. Not used by evaluation. |
+| `ruby[].base` | string | yes | The kanji as written in the lyrics (`願`). |
+| `ruby[].start`, `ruby[].end` | integer | yes | Where the reading is in the line text: the texts of the line's chunks joined, counted in characters from 0. `end` is not included. In order, and not overlapping. |
+
+A line with furigana, from `kizami generate`. The line text is `ねがいを`;
+characters 0 to 2 (`ねが`) are the reading of `願`. The second chunk starts
+inside the kanji:
+
+```json
+{
+  "chunks": [
+    { "text": "ね", "start_ms": 14200 },
+    { "text": "がいを", "start_ms": 14460 }
+  ],
+  "ruby": [{ "base": "願", "start": 0, "end": 2 }]
+}
+```
 
 ## Rules
 

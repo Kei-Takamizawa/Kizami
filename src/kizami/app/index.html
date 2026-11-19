@@ -9,6 +9,7 @@
   --bg: #121418; --panel: #1b1e24; --panel2: #242830; --line: #333945;
   --text: #e8eaee; --dim: #8b93a1; --accent: #ffb454; --accent2: #5cc8ff;
   --warn: #ff6b81; --ok: #7bd88f;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -37,16 +38,17 @@ h1 small { color: var(--dim); font-size: 14px; font-weight: 400; margin-left: 8p
 #drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 #drop:focus-within { outline: 2px solid var(--accent2); outline-offset: 2px; }
 label.check { display: inline-flex; gap: 8px; align-items: center; margin-top: 10px; color: var(--dim); cursor: pointer; }
-textarea, input[type=text], input[type=number] {
+textarea, input[type=text], input[type=number], select {
   font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%;
 }
 textarea { min-height: 220px; resize: vertical; line-height: 1.6; }
-textarea:focus, input:focus { outline: 2px solid var(--accent2); outline-offset: 0; border-color: transparent; }
+textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent2); outline-offset: 0; border-color: transparent; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .row label, .field label { display: block; color: var(--dim); font-size: 13px; margin-bottom: 4px; }
 .field { margin-top: 12px; }
 .offset { display: flex; align-items: center; gap: 8px; }
 .offset input { width: 110px; }
+select { width: auto; max-width: 100%; }
 details summary { cursor: pointer; color: var(--dim); }
 details[open] summary { margin-bottom: 10px; }
 button {
@@ -102,6 +104,15 @@ button.primary { background: var(--accent); color: #1a1200; border-color: var(--
 
     <section class="card">
       <h2><span class="step">3</span>Output</h2>
+      <div class="field">
+        <label for="kanji">Kanji</label>
+        <select id="kanji">
+          <option value="hiragana">Show as hiragana (願い → ねがい)</option>
+          <option value="ruby">Show with furigana (願 with ねが above it)</option>
+        </select>
+        <label class="check"><input type="checkbox" id="spaces" checked> Space after each chunk</label>
+        <p class="hint">With furigana, a chunk that starts inside a kanji (the が of 願) lights up in the furigana. These two choices, like the offset below, can be changed after the song is done: just download again.</p>
+      </div>
       <div class="field">
         <label for="offset">Display offset (ms)</label>
         <div class="offset"><input type="number" id="offset" step="10" value="0"><span class="hint" style="margin:0">0 = as timed</span></div>
@@ -159,10 +170,13 @@ function loadSettings() {
   try {
     const o = JSON.parse(localStorage.getItem('kizami-app') || '{}');
     if (Number.isFinite(o.offset)) $('offset').value = o.offset;
+    if (o.kanji === 'ruby' || o.kanji === 'hiragana') $('kanji').value = o.kanji;
+    if (typeof o.spaces === 'boolean') $('spaces').checked = o.spaces;
   } catch (e) { /* storage blocked */ }
 }
 function saveSettings() {
-  try { localStorage.setItem('kizami-app', JSON.stringify({ offset: offsetMs() })); } catch (e) { /* storage blocked */ }
+  const o = { offset: offsetMs(), kanji: $('kanji').value, spaces: $('spaces').checked };
+  try { localStorage.setItem('kizami-app', JSON.stringify(o)); } catch (e) { /* storage blocked */ }
 }
 function offsetMs() {
   const v = Math.round(Number($('offset').value));
@@ -266,13 +280,21 @@ $('download').addEventListener('click', async () => {
   if (!job) return;
   saveSettings();
   const source = !$('useTaggerWrap').hidden && $('useTagger').checked ? 'tagger' : 'generated';
+  const ruby = $('kanji').value === 'ruby';
+  const spaces = $('spaces').checked ? 1 : 0;
   try {
-    const r = await api(`/api/jobs/${job.id}/ttml?offset_ms=${offsetMs()}&source=${source}`);
+    const r = await api(`/api/jobs/${job.id}/ttml?offset_ms=${offsetMs()}&source=${source}&ruby=${ruby ? 1 : 0}&spaces=${spaces}`);
     const blob = await r.blob();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = job.ttml_name;
+    a.href = URL.createObjectURL(blob); a.download = ruby ? job.ruby_ttml_name : job.ttml_name;
     document.body.appendChild(a); a.click(); a.remove();            // Firefox needs the link in the page
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    if (ruby) {
+      const missing = Number(r.headers.get('X-Kizami-Lines-Without-Furigana') || 0);
+      const withRuby = Number(r.headers.get('X-Kizami-Furigana-Lines') || 0);
+      if (missing) alertResult(`${missing === 1 ? '1 line has' : `${missing} lines have`} no furigana: their text is not the same as in the timing Kizami made (for example a chunk without a time in the tagger).`);
+      else if (!withRuby) alertResult('There were no kanji to show with furigana.');
+    }
   } catch (err) { alertResult(`Download failed: ${err.message}`); }
 });
 

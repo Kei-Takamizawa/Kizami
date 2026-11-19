@@ -22,7 +22,7 @@ from kizami.app import (
     run_pipeline,
     safe_name,
 )
-from kizami.timing import Chunk, Line, TimingDocument, save_document
+from kizami.timing import Chunk, Line, Mora, Ruby, TimingDocument, save_document
 
 NS = "{http://www.w3.org/ns/ttml}"
 
@@ -186,6 +186,74 @@ def test_the_download_can_use_the_fixes_saved_in_the_tagger(running):
     ]
 
 
+def furigana_timing(folder):
+    """願いを, with a chunk start at the が inside 願, as kizami generate writes it."""
+    morae = (Mora("が", 1500), Mora("い", 1800))
+    line = Line(chunks=(Chunk("ね", 500), Chunk("がい", 1500, morae=morae)), ruby=(Ruby("願", 0, 2),))
+    save_document(TimingDocument(lines=(line,), meta={"ruby": True}), folder / "auto_chu.json")
+
+
+def test_the_download_can_show_kanji_with_furigana_and_drop_the_chunk_spaces(running):
+    app, port = running
+    status, data, _ = start(port, app.token, upload=upload(port, app.token))
+    info = wait_done(port, app.token, json.loads(data)["id"])
+    folder = Path(info["folder"])
+    furigana_timing(folder)
+
+    status, body, response = request(port, "GET", f"/api/jobs/{info['id']}/ttml?ruby=1", token=app.token)
+    plain = request(port, "GET", f"/api/jobs/{info['id']}/ttml?spaces=0", token=app.token)[1]
+
+    assert status == 200
+    assert info["ruby_ttml_name"] == "ドライ フラワー-furigana.ttml"
+    assert (folder / info["ruby_ttml_name"]).is_file()
+    assert "-furigana.ttml" in response.getheader("Content-Disposition")
+    assert response.getheader("X-Kizami-Furigana-Lines") == "1"
+    text = body.decode("utf-8")
+    assert '<span tts:ruby="base">願</span>' in text
+    assert '<span tts:ruby="text" begin="00:00:01.500" end="00:00:01.800">が</span>' in text
+    assert "</span><span" in plain.decode("utf-8") and "</span> <span" not in plain.decode("utf-8")
+
+
+def test_tagger_fixes_keep_the_furigana_of_the_lines_with_the_same_text(running):
+    app, port = running
+    status, data, _ = start(port, app.token, upload=upload(port, app.token))
+    info = wait_done(port, app.token, json.loads(data)["id"])
+    folder = Path(info["folder"])
+    furigana_timing(folder)
+    project = {"format": "kizami-tagger", "version": 1, "lines": [
+        {"units": [{"text": "ね", "start_ms": 600}, {"text": "がい", "start_ms": 1600, "end_ms": 2100}]},
+        {"units": [{"text": "ほか", "start_ms": 3000, "end_ms": 3400}]},
+    ]}  # fmt: skip
+    (folder / "tagger.json").write_text(json.dumps(project), encoding="utf-8")
+
+    status, body, response = request(port, "GET", f"/api/jobs/{info['id']}/ttml?source=tagger&ruby=1", token=app.token)
+
+    assert status == 200
+    text = body.decode("utf-8")
+    assert '<span tts:ruby="text" begin="00:00:00.600" end="00:00:01.210">ね</span>' in text  # voice stops at 1.2 s
+    assert '<span tts:ruby="text" begin="00:00:01.600" end="00:00:01.900">が</span>' in text  # い moved +100 ms too
+    assert (response.getheader("X-Kizami-Furigana-Lines"), response.getheader("X-Kizami-Lines-Without-Furigana")) == ("1", "1")
+
+
+def test_uploads_wait_in_the_work_folder_and_leftovers_are_removed(tmp_path):
+    work = tmp_path / "work"
+    (work / "_uploads").mkdir(parents=True)
+    old = work / "_uploads" / "old.m4a"
+    old.write_bytes(b"x")
+    os.utime(old, (time.time() - 7200, time.time() - 7200))
+    fresh = work / "_uploads" / "fresh.m4a"  # another app may be receiving it
+    fresh.write_bytes(b"y")
+
+    app = App(work, None)
+    upload_id = app.save_upload("song.wav", _Stream(b"abc"), 3)
+    waiting = app.uploads[upload_id].path
+
+    assert not old.exists() and fresh.exists()
+    assert waiting.parent == work / "_uploads"
+    app.close()
+    assert not waiting.exists() and fresh.exists()
+
+
 def test_the_tagger_is_started_once_per_song(running):
     app, port = running
     status, data, _ = start(port, app.token, upload=upload(port, app.token))
@@ -246,7 +314,9 @@ class _Stream:
         ("ドライフラワー (152kbit_Opus).opus", "ドライフラワー _152kbit_Opus_"),
         ("../../etc/passwd", "passwd"),
         ("a/b\\c.wav", "c"),
-        ("....wav", "song"),
+        ("....wav", "song"),  # Path("....wav").stem is "....wav" in Python 3.14
+        (".hidden.m4a", "hidden"),
+        ("a.b.flac", "a.b"),
         ("", "song"),
     ],
 )

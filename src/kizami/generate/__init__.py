@@ -242,11 +242,13 @@ def _ms(seconds: float) -> int:
 
 def _write_level(out: Path, level: str, lines, chosen, p, atoms=None, kanji: str = "keep") -> LevelResult:
     from kizami.audacity import label_text_from_document
-    from kizami.generate.place import chunks_for
-    from kizami.timing import Chunk, Line, Mora, TimingDocument, save_document
+    from kizami.generate.place import chunks_for, ruby_for
+    from kizami.timing import Chunk, Line, Mora, Ruby, TimingDocument, save_document
 
+    with_ruby = kanji == "hiragana"
+    ruby = ruby_for(lines, chosen) if with_ruby else [[] for _ in lines]
     doc_lines = []
-    for chunks in chunks_for(lines, chosen, atoms):
+    for chunks, line_ruby in zip(chunks_for(lines, chosen, atoms), ruby):
         if chunks:
             doc_lines.append(
                 Line(
@@ -258,14 +260,17 @@ def _write_level(out: Path, level: str, lines, chosen, p, atoms=None, kanji: str
                             morae=tuple(Mora(kana=k, start_ms=_ms(ms), uncertain=mu) for k, ms, mu in morae),
                         )
                         for t, s, u, morae in chunks
-                    )
+                    ),
+                    ruby=tuple(Ruby(base=b, start=x, end=y) for x, y, b in line_ruby),
                 )
             )
     if not doc_lines:
         raise GenerateError("no chunk could be placed")
     params = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()}
-    doc = TimingDocument(lines=tuple(doc_lines), kind="generated",
-                         meta={"source": "kizami generate", "level": level, "kanji": kanji, "params": params})  # fmt: skip
+    meta = {"source": "kizami generate", "level": level, "kanji": kanji}
+    if with_ruby:
+        meta["ruby"] = True  # the lines carry furigana for their kanji (kizami ttml --ruby)
+    doc = TimingDocument(lines=tuple(doc_lines), kind="generated", meta={**meta, "params": params})
     timing = out / f"auto_{level}.json"
     labels = out / f"auto_labels_{level}.txt"
     save_document(doc, timing)

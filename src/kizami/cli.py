@@ -168,7 +168,21 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     ttml.add_argument("timing", help="timing file (for example auto_chu.json) or tagger project (tagger.json)")
-    ttml.add_argument("-o", "--output", help="TTML file to write (default: the input name with .ttml)")
+    ttml.add_argument(
+        "-o", "--output", help="TTML file to write (default: the input name with .ttml, or -furigana.ttml with --ruby)"
+    )
+    ttml.add_argument(
+        "--ruby",
+        action="store_true",
+        help="write kanji with furigana above them (needs a timing file from kizami generate, "
+        "or a tagger project with auto_chu.json next to it)",
+    )
+    ttml.add_argument(
+        "--readings",
+        help="with --ruby and a tagger project: the timing file from kizami generate to take the furigana from "
+        "(default: auto_chu.json next to the project)",
+    )
+    ttml.add_argument("--no-chunk-spaces", action="store_true", help="no space after each chunk (spaces in the lyrics stay)")
     ttml.add_argument(
         "--audio",
         help="vocal track (PCM WAV) to find where the voice stops (default: vocals.wav next to the input, if it is there)",
@@ -389,10 +403,11 @@ def _run_generate(args: argparse.Namespace) -> None:
 def _run_ttml(args: argparse.Namespace) -> None:
     from pathlib import Path
 
-    from kizami.ttml import TtmlError, document_to_ttml, load_for_export
+    from kizami.ttml import TtmlError, load_for_export, readings_for, render_ttml
 
     source = Path(args.timing)
-    out = Path(args.output) if args.output else source.with_suffix(".ttml")
+    default_name = f"{source.stem}-furigana.ttml" if args.ruby else f"{source.stem}.ttml"
+    out = Path(args.output) if args.output else source.with_name(default_name)
     if out.resolve() == source.resolve():
         raise CliError("the output must not be the input file")
     audio = None
@@ -402,6 +417,9 @@ def _run_ttml(args: argparse.Namespace) -> None:
             audio = None
     try:
         doc = load_for_export(source)
+        readings = None
+        if args.ruby and doc.meta.get("source") == "kizami tagger":
+            readings = readings_for(source, args.readings)
         if audio is not None:
             try:
                 from kizami.loudness import LoudnessError, add_end_times, loudness_from_wav
@@ -411,15 +429,33 @@ def _run_ttml(args: argparse.Namespace) -> None:
                 doc = add_end_times(doc, loudness_from_wav(audio))
             except LoudnessError as exc:
                 raise CliError(str(exc)) from exc
-        text = document_to_ttml(
-            doc, offset_ms=args.offset_ms, title=args.title, artists=args.artist, album=args.album, lang=args.lang
+        result = render_ttml(
+            doc,
+            offset_ms=args.offset_ms,
+            title=args.title,
+            artists=args.artist,
+            album=args.album,
+            lang=args.lang,
+            chunk_spaces=not args.no_chunk_spaces,
+            ruby=args.ruby,
+            readings=readings,
         )
     except TtmlError as exc:
         raise CliError(str(exc)) from exc
-    out.write_text(text, encoding="utf-8")
-    chunks = sum(len(line.chunks) for line in doc.lines)
+    out.write_text(result.text, encoding="utf-8")
     ends = f"ends from {audio.name}" if audio is not None else "ends at the next chunk (no audio)"
-    print(f"Wrote {len(doc.lines)} lines, {chunks} chunks to {out} ({ends}, offset {args.offset_ms:+d} ms)")
+    print(f"Wrote {result.lines} lines, {result.chunks} chunks to {out} ({ends}, offset {args.offset_ms:+d} ms)")
+    if args.ruby:
+        print(f"Furigana on {result.ruby_lines} of {result.lines} lines.")
+        if result.lines_without_readings:
+            print(
+                f"note: {result.lines_without_readings} lines have no furigana: their text is not the same as in "
+                "the generated timing (for example a chunk without a time in the tagger)."
+            )
+        elif not result.ruby_lines and doc.meta.get("source") == "kizami tagger" and readings is None:
+            print(f"note: no furigana: there is no timing file from kizami generate with furigana next to {source.name}.")
+        elif not result.ruby_lines and not doc.meta.get("ruby"):
+            print("note: no furigana: this timing file has none. Make it again with kizami generate (--kanji hiragana).")
 
 
 def _run_app(args: argparse.Namespace) -> None:

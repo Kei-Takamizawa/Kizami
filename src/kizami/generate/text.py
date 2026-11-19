@@ -308,18 +308,27 @@ def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
     and the old text is kept as ``original``. Katakana and Latin letters stay
     as written. Each returned unit has ``written``: where it starts in the
     old text, or None for a later mora of a kanji reading.
+
+    Each line also gets ``ruby``: ``[(start, end, base), ...]``, the parts of
+    the new text that are the reading of kanji ``base`` (for furigana). Kana
+    that the written text and the reading share at either end stay outside:
+    行っ read いっ gives the base 行 over い.
     """
     out: list[dict] = []
     by_line: dict[int, list[dict]] = {}
     for a in atoms:
         by_line.setdefault(a["line"], []).append(a)
     for li, line in enumerate(lines):
-        old, shown, src = line["display"], "", 0
+        old, shown, src, ruby = line["display"], "", 0, []
         for a in by_line.get(li, []):
             if a["offset"] >= src:
                 shown += old[src : a["offset"]]
             src = max(src, a["end"])
             text = a["hiragana"] if a.get("hiragana") is not None else old[a["offset"] : a["end"]]
+            if a.get("hiragana") is not None:
+                part = ruby_part(old[a["offset"] : a["end"]], text)
+                if part is not None:
+                    ruby.append((len(shown) + part[0], len(shown) + part[1], part[2]))
             morae = a.get("morae") or []
             strengths = a.get("mora_strengths") or []
             split = (
@@ -345,4 +354,24 @@ def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
                 shown += kana
         line["original"] = old
         line["display"] = shown + old[src:]
+        line["ruby"] = ruby
     return out
+
+
+def ruby_part(written: str, reading: str) -> tuple[int, int, str] | None:
+    """Where the kanji of ``written`` sit in ``reading``: ``(start, end, base)``, or None.
+
+    Kana at either end that ``written`` and ``reading`` share are left out
+    (``行っ`` and ``いっ`` give ``(0, 1, "行")``). None when no kanji is left.
+    """
+    w = kata_to_hira(written)
+    s = 0
+    while s < len(w) - 1 and s < len(reading) - 1 and is_kana(w[s]) and w[s] == reading[s]:
+        s += 1
+    e = 0
+    while e < len(w) - s - 1 and e < len(reading) - s - 1 and is_kana(w[-1 - e]) and w[-1 - e] == reading[-1 - e]:
+        e += 1
+    base = written[s : len(written) - e]
+    if not has_kanji(base) or not reading[s : len(reading) - e]:
+        return None
+    return s, len(reading) - e, base

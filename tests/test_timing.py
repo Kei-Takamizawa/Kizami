@@ -195,3 +195,37 @@ def test_morae_round_trip_and_are_omitted_when_empty(tmp_path):
     data = document_to_dict(doc)["lines"][0]["chunks"]
     assert data[0]["morae"][1] == {"kana": "が", "start_ms": 1180, "uncertain": True}
     assert "morae" not in data[1]
+
+
+def test_furigana_round_trip_and_are_omitted_when_empty(tmp_path):
+    from kizami.timing import Ruby
+
+    line = Line(chunks=(Chunk("ね", 1000), Chunk("がいを", 1300)), ruby=(Ruby("願", 0, 2),))
+    doc = TimingDocument(lines=(line, Line(chunks=(Chunk("あ", 3000),))))
+    path = tmp_path / "t.json"
+
+    save_document(doc, path)
+
+    assert load_document(path) == doc
+    assert line.text == "ねがいを"
+    data = document_to_dict(doc)["lines"]
+    assert data[0]["ruby"] == [{"base": "願", "start": 0, "end": 2}]
+    assert "ruby" not in data[1]
+
+
+@pytest.mark.parametrize(
+    ("ruby", "message_part"),
+    [
+        ({"base": "願"}, "lines[0].ruby"),
+        ([{"base": "", "start": 0, "end": 1}], "lines[0].ruby[0].base"),
+        ([{"base": "夜", "start": 0, "end": 0}], "lines[0].ruby[0]"),
+        ([{"base": "夜", "start": 0, "end": 99}], "positions in the line text"),
+        ([{"base": "夜", "start": 0, "end": 2}, {"base": "空", "start": 1, "end": 3}], "lines[0].ruby[1]"),
+    ],
+)
+def test_furigana_must_point_into_the_line_text(ruby, message_part):
+    data = _minimal_dict()
+    data["lines"][0]["ruby"] = ruby
+
+    with pytest.raises(TimingFormatError, match=message_part.replace("[", r"\[").replace("]", r"\]")):
+        document_from_dict(data)

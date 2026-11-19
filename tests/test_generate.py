@@ -173,6 +173,69 @@ def test_a_medium_chunk_can_start_inside_a_kanji():
     assert chunks_for(lines, chosen, out)[0][1][3] == [("が", 1.3, False), ("い", 1.6, False), ("を", 1.9, False)]
 
 
+def test_hiragana_records_where_each_kanji_reading_is_for_furigana():
+    from kizami.generate.text import to_hiragana
+
+    lines, atoms = _placed_line("願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]])
+
+    to_hiragana(lines, atoms)
+
+    assert lines[0]["ruby"] == [(0, 2, "願")]  # ねが, split into two units, is one reading
+
+
+@pytest.mark.parametrize(
+    ("written", "reading", "expected"),
+    [
+        ("願", "ねが", (0, 2, "願")),
+        ("行っ", "いっ", (0, 1, "行")),  # the joined っ stays outside
+        ("お願い", "おねがい", (1, 3, "願")),
+        ("今日", "きょう", (0, 3, "今日")),
+        ("ゆめ", "ゆめ", None),  # no kanji
+        ("ッ", "っ", None),
+    ],
+)
+def test_ruby_part_leaves_the_shared_kana_outside(written, reading, expected):
+    from kizami.generate.text import ruby_part
+
+    assert ruby_part(written, reading) == expected
+
+
+def test_furigana_positions_follow_the_chunk_texts_joined():
+    from kizami.generate.place import ruby_for
+
+    lines = [{"display": " 「ねがい」 ゆめ ", "ruby": [(2, 4, "願"), (7, 9, "夢")]}]  # the first space is dropped
+    chosen = [
+        {"line": 0, "offset": 2, "time": 1.0, "snapped": True},
+        {"line": 0, "offset": 3, "time": 1.3, "snapped": True},
+        {"line": 0, "offset": 7, "time": 2.0, "snapped": True},
+    ]
+
+    texts = [text for text, *_ in chunks_for(lines, chosen)[0]]
+    ruby = ruby_for(lines, chosen)[0]
+
+    assert texts == ["「ね", "がい」 ", "ゆめ"]
+    joined = "".join(texts)
+    assert [(joined[a:b], base) for a, b, base in ruby] == [("ねが", "願"), ("ゆめ", "夢")]
+
+
+def test_furigana_is_written_to_the_timing_file(tmp_path):
+    from kizami.generate import _write_level
+    from kizami.timing import Ruby, load_document
+
+    lines = [{"display": "ねがいを", "ruby": [(0, 2, "願")]}]
+    chosen = [
+        {"line": 0, "offset": 0, "time": 1.0, "snapped": True},
+        {"line": 0, "offset": 1, "time": 1.3, "snapped": True},
+    ]
+
+    result = _write_level(tmp_path, "chu", lines, chosen, {}, kanji="hiragana")
+
+    doc = load_document(result.timing)
+    assert doc.meta["ruby"] is True
+    assert doc.lines[0].ruby == (Ruby("願", 0, 2),)
+    assert [c.text for c in doc.lines[0].chunks] == ["ね", "がいを"]
+
+
 def test_a_space_between_words_stays_with_the_chunk_before_it():
     lines = [{"display": "「夜空を 駆ける」 "}]
     chosen = [{"line": 0, "offset": 1, "time": 1.0, "snapped": True}, {"line": 0, "offset": 5, "time": 2.0, "snapped": True}]

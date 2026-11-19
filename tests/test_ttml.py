@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from kizami.cli import main
-from kizami.timing import Chunk, Line, TimingDocument, save_document
+from kizami.timing import Chunk, Line, Mora, Ruby, TimingDocument, save_document
 from kizami.ttml import (
     LAST_CHUNK_MS,
     NS_AMLL,
@@ -18,10 +18,12 @@ from kizami.ttml import (
     document_to_ttml,
     format_time,
     load_for_export,
+    render_ttml,
 )
 
 TT = f"{{{NS_TT}}}"
 TTM = f"{{{NS_TTM}}}"
+TTS_RUBY = "{http://www.w3.org/ns/ttml#styling}ruby"
 ITUNES = f"{{{NS_ITUNES}}}"
 XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
 
@@ -75,9 +77,20 @@ def test_each_line_is_a_p_and_each_chunk_a_span_with_its_own_times():
     assert (div.get("begin"), div.get("end")) == ("00:00:12.346", "00:00:17.000")
 
 
-def test_spans_follow_each_other_without_whitespace_between_them():
-    text = document_to_ttml(doc_of(([Chunk("あ", 0, 100), Chunk("い", 100, 200)], None)))
-    assert "</span><span" in text
+def line_texts(text):
+    """The text of each line as a player shows it (spans and the spaces between them)."""
+    return ["".join(p.itertext()) for p in ET.fromstring(text).iter(f"{TT}p")]
+
+
+def test_every_chunk_is_followed_by_a_space_between_the_spans_unless_turned_off():
+    doc = doc_of(([Chunk("あ", 0, 100), Chunk("い", 100, 200), Chunk("う", 200, 300)], None))
+
+    spaced = document_to_ttml(doc)
+    plain = document_to_ttml(doc, chunk_spaces=False)
+
+    assert '</span> <span begin="00:00:00.100"' in spaced
+    assert line_texts(spaced) == ["あ い う"]  # none at the end of the line
+    assert "</span><span" in plain and line_texts(plain) == ["あいう"]
 
 
 def test_the_last_chunk_of_a_line_without_an_end_is_cut_at_the_next_line():
@@ -114,17 +127,106 @@ def test_display_offset_must_be_a_whole_number_in_range(offset):
 def test_latin_words_keep_a_space_between_them_but_japanese_does_not():
     doc = doc_of(([Chunk("I", 0), Chunk("love", 200), Chunk("you,", 400), Chunk("baby", 600), Chunk("ねえ", 800, 900)], None))
 
-    texts = [t for t, _, _ in spans(document_to_ttml(doc))[0]]
+    text = document_to_ttml(doc, chunk_spaces=False)
 
-    assert texts == ["I ", "love ", "you, ", "baby", "ねえ"]
+    assert [t for t, _, _ in spans(text)[0]] == ["I", "love", "you,", "baby", "ねえ"]
+    assert line_texts(text) == ["I love you, babyねえ"]
 
 
-def test_a_space_kept_at_the_end_of_a_chunk_stays_in_its_span():
+def test_a_space_written_in_the_lyrics_is_kept_after_its_span():
     doc = doc_of(([Chunk("ねえ\u3000", 0), Chunk("きみ ", 200), Chunk("Hi", 400, 500)], None))
 
-    texts = [t for t, _, _ in spans(document_to_ttml(doc))[0]]
+    text = document_to_ttml(doc, chunk_spaces=False)
 
-    assert texts == ["ねえ\u3000", "きみ ", "Hi"]
+    assert [t for t, _, _ in spans(text)[0]] == ["ねえ", "きみ", "Hi"]
+    assert line_texts(text) == ["ねえ きみ Hi"]
+
+
+def words(text):
+    """Per line: ("plain", text, begin, end) or ("ruby", base, [(reading, begin, end), ...])."""
+    out = []
+    for p in ET.fromstring(text).iter(f"{TT}p"):
+        row = []
+        for el in p:
+            if el.get(TTS_RUBY) == "container":
+                base = next(c.text for c in el if c.get(TTS_RUBY) == "base")
+                rts = [(r.text, r.get("begin"), r.get("end")) for r in el.iter(f"{TT}span") if r.get(TTS_RUBY) == "text"]
+                row.append(("ruby", base, rts))
+            else:
+                row.append(("plain", el.text, el.get("begin"), el.get("end")))
+        out.append(row)
+    return out
+
+
+def ruby_doc():
+    """願いを: a chunk starts at the が inside 願."""
+    morae = (Mora("が", 1300), Mora("い", 1600), Mora("を", 1900))
+    line = Line(chunks=(Chunk("ね", 1000), Chunk("がいを", 1300, 2200, morae=morae)), ruby=(Ruby("願", 0, 2),))
+    return TimingDocument(lines=(line,), meta={"ruby": True})
+
+
+def test_furigana_split_where_a_chunk_starts_inside_the_kanji():
+    out = render_ttml(ruby_doc(), ruby=True)
+
+    assert words(out.text) == [
+        [
+            ("ruby", "願", [("ね", "00:00:01.000", "00:00:01.300"), ("が", "00:00:01.300", "00:00:01.600")]),
+            ("plain", "いを", "00:00:01.600", "00:00:02.200"),  # starts at the mora い
+        ]
+    ]
+    assert line_texts(out.text) == ["願ねがいを"]  # no chunk space inside the reading of one kanji
+    assert out.ruby_lines == 1
+
+
+def test_without_furigana_the_same_timing_gives_hiragana_spans():
+    assert spans(render_ttml(ruby_doc()).text) == [
+        [("ね", "00:00:01.000", "00:00:01.300"), ("がいを", "00:00:01.300", "00:00:02.200")]
+    ]
+
+
+def test_furigana_without_morae_shares_the_chunk_time_by_character_and_spaces_follow_kanji():
+    line = Line(chunks=(Chunk("ゆめ", 0), Chunk("みる", 500, 900)), ruby=(Ruby("夢", 0, 2), Ruby("見", 2, 3)))
+
+    text = document_to_ttml(TimingDocument(lines=(line,), meta={"ruby": True}), ruby=True, offset_ms=100)
+
+    assert words(text) == [
+        [
+            ("ruby", "夢", [("ゆめ", "00:00:00.100", "00:00:00.600")]),
+            ("ruby", "見", [("み", "00:00:00.600", "00:00:00.800")]),
+            ("plain", "る", "00:00:00.800", "00:00:01.000"),
+        ]
+    ]
+    assert line_texts(text) == ["夢ゆめ 見みる"]
+
+
+def tagger_doc(*lines):
+    return TimingDocument(lines=tuple(Line(chunks=tuple(c)) for c in lines), kind="reference")
+
+
+def test_tagger_fixes_take_their_furigana_from_the_generated_timing():
+    fixed = tagger_doc([Chunk("ね", 1100), Chunk("がいを", 1400, 2300)], [Chunk("ほか", 3000, 3500)])
+
+    out = render_ttml(fixed, ruby=True, readings=ruby_doc())
+
+    assert words(out.text)[0] == [
+        ("ruby", "願", [("ね", "00:00:01.100", "00:00:01.400"), ("が", "00:00:01.400", "00:00:01.700")]),
+        ("plain", "いを", "00:00:01.700", "00:00:02.300"),  # い moved with its chunk start (+100 ms)
+    ]
+    assert (out.ruby_lines, out.lines_without_readings) == (1, 1)  # ほか is not in the generated timing
+
+
+def test_tagger_chunks_merged_differently_still_get_furigana():
+    fixed = tagger_doc([Chunk("ねが", 1000, 1500), Chunk("いを", 1600, 2100)])
+
+    assert words(document_to_ttml(fixed, ruby=True, readings=ruby_doc()))[0] == [
+        ("ruby", "願", [("ねが", "00:00:01.000", "00:00:01.500")]),
+        ("plain", "いを", "00:00:01.600", "00:00:02.100"),
+    ]
+
+
+def test_furigana_asked_for_a_timing_without_them_gives_hiragana():
+    out = render_ttml(doc_of(([Chunk("ねがい", 0, 500)], None)), ruby=True)
+    assert (spans(out.text), out.ruby_lines) == ([[("ねがい", "00:00:00.000", "00:00:00.500")]], 0)
 
 
 def test_text_is_escaped():
@@ -228,3 +330,28 @@ def test_cli_reports_a_bad_input(tmp_path, capsys):
 def _sec(value):
     h, m, s = value.split(":")
     return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def test_cli_ruby_writes_a_furigana_file_and_reads_them_for_a_tagger_project(tmp_path, capsys):
+    save_document(ruby_doc(), tmp_path / "auto_chu.json")
+    project = {"format": "kizami-tagger", "version": 1,
+               "lines": [{"units": [{"text": "ね", "start_ms": 1000}, {"text": "がいを", "start_ms": 1300, "end_ms": 2200}]}]}  # fmt: skip
+    (tmp_path / "tagger.json").write_text(json.dumps(project), encoding="utf-8")
+
+    assert main(["ttml", str(tmp_path / "auto_chu.json"), "--ruby", "--no-audio"]) == 0
+    assert main(["ttml", str(tmp_path / "tagger.json"), "--ruby", "--no-audio", "--no-chunk-spaces"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.count("Furigana on 1 of 1 lines.") == 2
+    for name in ("auto_chu-furigana.ttml", "tagger-furigana.ttml"):
+        assert words((tmp_path / name).read_text(encoding="utf-8"))[0][0][:2] == ("ruby", "願")
+
+
+def test_cli_ruby_says_why_a_timing_file_gives_no_furigana(tmp_path, capsys):
+    timing = tmp_path / "old.json"
+    save_document(doc_of(([Chunk("ねがい", 0, 500)], None)), timing)
+
+    assert main(["ttml", str(timing), "--ruby"]) == 0
+
+    assert "Make it again with kizami generate" in capsys.readouterr().out
+    assert (tmp_path / "old-furigana.ttml").is_file()

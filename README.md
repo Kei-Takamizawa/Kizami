@@ -14,9 +14,10 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
   grammar boundaries.
 - **Chunks start on strong attacks.** A new chunk starts at each word and
   at each strong attack inside a word, so the text moves with the groove.
-- **Kanji shown in hiragana.** Kanji are written as their reading
+- **Kanji in hiragana or with furigana.** Kanji are written as their reading
   (`願い` becomes `ねがい`), so a chunk can start at a strong attack inside a
-  kanji, such as the `が` of `願`.
+  kanji, such as the `が` of `願`. Or keep the kanji and show the reading
+  above them as furigana; the reading then lights up in parts.
 - **Everything runs on your computer.** You give Kizami a song file and a
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
@@ -35,9 +36,11 @@ kizami app --model-dir path/to/models
 ```
 
 You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
-once). Timing a four-minute song takes about 40 seconds on an Apple silicon
-Mac, plus the vocal separation, which runs once per song. There is also a display offset for players or earphones that play the sound
-late. See [the app guide](docs/app.md).
+once). On an Apple silicon Mac, a song of about five minutes took 67 seconds
+to separate the voice (once per song) and 40 seconds to time. You can choose
+hiragana or furigana, a space after each chunk, and a display offset for
+players or earphones that play the sound late. See
+[the app guide](docs/app.md).
 
 ## Planned
 

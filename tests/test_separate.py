@@ -1,3 +1,4 @@
+import json
 import shutil
 import stat
 import sys
@@ -9,8 +10,10 @@ import kizami.separate as separate
 from kizami.separate import SeparateError, convert_to_wav, separate_vocals
 
 FAKE_DEMUCS = r'''#!{python}
-import sys, pathlib, time
+import sys, pathlib, time, os, json
 args = sys.argv[1:]
+if os.environ.get("FAKE_DEMUCS_LOG"):
+    pathlib.Path(os.environ["FAKE_DEMUCS_LOG"]).write_text(json.dumps({{"args": args, "offline": os.environ.get("HF_HUB_OFFLINE")}}))
 assert args[:2] == ["-m", "demucs"], args
 out = pathlib.Path(args[args.index("-o") + 1])
 name = args[args.index("--filename") + 1]
@@ -47,6 +50,51 @@ def test_separate_vocals_runs_demucs_and_reports_progress(tmp_path, fake_python)
 
     assert (tmp_path / "out" / "vocals.wav").read_bytes() == b"RIFF fake vocals"
     assert seen == [0, 37, 100]
+
+
+def run_logged(tmp_path, fake_python, monkeypatch):
+    log = tmp_path / "log.json"
+    monkeypatch.setenv("FAKE_DEMUCS_LOG", str(log))
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    song = tmp_path / "song.m4a"
+    song.write_bytes(b"x")
+    separate_vocals(song, tmp_path / "vocals.wav", python=fake_python)
+    return json.loads(log.read_text())
+
+
+def test_separation_has_no_random_shift_so_a_song_always_gives_the_same_vocals(tmp_path, fake_python, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    args = run_logged(tmp_path, fake_python, monkeypatch)["args"]
+    assert args[args.index("--shifts") + 1] == "0"
+
+
+def test_demucs_stays_offline_once_its_weights_are_in_the_cache(tmp_path, fake_python, monkeypatch):
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hub"))
+    assert run_logged(tmp_path, fake_python, monkeypatch)["offline"] is None  # first run: may download
+
+    snapshot = tmp_path / "hub" / "models--adefossez--HTDemucs" / "snapshots" / "abc"
+    snapshot.mkdir(parents=True)
+    (snapshot / "htdemucs.yaml").write_text("models: [x]\n")
+    (snapshot / "955717e8.safetensors").write_bytes(b"w")
+
+    assert separate.weights_cached()
+    assert run_logged(tmp_path, fake_python, monkeypatch)["offline"] == "1"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"HF_HUB_CACHE": "/c/hub"}, "/c/hub"),
+        ({"HF_HOME": "/h"}, "/h/hub"),
+        ({"XDG_CACHE_HOME": "/x"}, "/x/huggingface/hub"),
+    ],
+)
+def test_hugging_face_cache_is_found_like_huggingface_hub_finds_it(monkeypatch, env, expected):
+    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert separate.hf_cache_dir().as_posix() == expected
 
 
 def test_separate_vocals_shows_the_demucs_error(tmp_path, fake_python):

@@ -301,6 +301,31 @@ def select(atoms, level, m_thr, gap=None):
     return out
 
 
+def _chunk_parts(lines, chosen):
+    """Per chunk, in order: (unit, next chosen unit of its line or None, text, parts).
+
+    ``parts`` are the ``(start, end)`` ranges of the line's display text that
+    make up ``text``. Chunks with only spaces are left out.
+    """
+    out, started = [], set()
+    for i, a in enumerate(chosen):
+        nxt = chosen[i + 1] if i + 1 < len(chosen) and chosen[i + 1]["line"] == a["line"] else None
+        disp = lines[a["line"]]["display"]
+        end = nxt["offset"] if nxt else a["offset"] + len(disp[a["offset"] :].rstrip())
+        parts = [(a["offset"], end)]
+        if a["line"] not in started and a["offset"] > 0:
+            lead = disp[: a["offset"]]
+            first, last = len(lead) - len(lead.lstrip()), len(lead.rstrip())
+            if last > first:
+                parts.insert(0, (first, last))
+        text = "".join(disp[x:y] for x, y in parts)
+        if not text.strip():
+            continue
+        started.add(a["line"])
+        out.append((a, nxt, text, parts))
+    return out
+
+
 def chunks_for(lines, chosen, atoms=None):
     """Per lyric line, the chunks as (text, start time in s, uncertain, morae).
 
@@ -314,14 +339,7 @@ def chunks_for(lines, chosen, atoms=None):
     """
     index = {id(a): i for i, a in enumerate(atoms or [])}
     out_lines = [[] for _ in lines]
-    for i, a in enumerate(chosen):
-        nxt = chosen[i + 1] if i + 1 < len(chosen) and chosen[i + 1]["line"] == a["line"] else None
-        disp = lines[a["line"]]["display"]
-        text = disp[a["offset"] : nxt["offset"]] if nxt else disp[a["offset"] :].rstrip()
-        if not out_lines[a["line"]] and a["offset"] > 0:
-            text = disp[: a["offset"]].strip() + text
-        if not text.strip():
-            continue
+    for a, nxt, text, _ in _chunk_parts(lines, chosen):
         morae = []
         if atoms is not None and id(a) in index:
             j = index[id(a)]
@@ -334,3 +352,34 @@ def chunks_for(lines, chosen, atoms=None):
                 morae = []
         out_lines[a["line"]].append((text, a["time"], not a["snapped"], morae))
     return out_lines
+
+
+def ruby_for(lines, chosen):
+    """Per lyric line, its furigana as ``(start, end, base)`` in the line's chunk texts joined.
+
+    Reads each line's ``ruby`` (set by ``text.to_hiragana``, in display text
+    positions). A range that is not wholly inside the chunks is left out.
+    """
+    where = [[] for _ in lines]  # (display start, display end, position in the joined text)
+    size = [0 for _ in lines]
+    for a, _, _, parts in _chunk_parts(lines, chosen):
+        li = a["line"]
+        for x, y in parts:
+            where[li].append((x, y, size[li]))
+            size[li] += y - x
+
+    def joined(li, d):
+        for x, y, at in where[li]:
+            if x <= d < y:
+                return at + d - x
+        return None
+
+    out = []
+    for li, line in enumerate(lines):
+        ranges = []
+        for start, end, base in line.get("ruby", ()):
+            a, b = joined(li, start), joined(li, end - 1)
+            if a is not None and b is not None and b + 1 - a == end - start:
+                ranges.append((a, b + 1, base))
+        out.append(ranges)
+    return out

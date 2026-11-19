@@ -24,8 +24,10 @@ anywhere.
 3. Download the timing model into a model folder. See
    [Generating timing](generate.md#models).
 
-Demucs, which takes the voice out of the song, downloads its own model the
-first time it runs. After that, the app works without the internet.
+Demucs, which takes the voice out of the song, downloads its own model
+(about 84 MB) the first time it runs. After that, the app works without the
+internet: Demucs reads the model from its cache and does not go online. The
+same song file always gives the same vocal track.
 
 ## Start the app
 
@@ -54,16 +56,32 @@ terminal to stop the app.
    section tags such as `[Chorus]` are skipped. When a word is sung
    differently from how it is written, give the reading in braces:
    `明日{あした}`.
-3. **Display offset.** Leave it at 0 at first. See below.
-4. Press **Make TTML**. The page shows each step. Timing a four-minute song
-   takes about 40 seconds on an Apple silicon Mac, plus the vocal separation.
-   The same song file is separated only once, so a second run (for example
-   with corrected lyrics) is faster.
+3. **Output.** Choose how kanji are shown and whether a space follows each
+   chunk (see below). Leave the display offset at 0 at first.
+4. Press **Make TTML**. The page shows each step. On an Apple silicon Mac, a
+   song of about five minutes took 67 seconds to separate the voice and
+   40 seconds to time. The same song file is separated only once, so a second
+   run (for example with corrected lyrics) is faster.
 5. Press **Download TTML**.
 
-Kanji are shown as their reading in hiragana, and a new piece of text starts
-at each word, at each strong attack of the voice, and after a pause or long
-note of one second or more. See [Generating timing](generate.md) for how this is decided.
+A new piece of text (a *chunk*) starts at each word, at each strong attack of
+the voice, and after a pause or long note of one second or more. See
+[Generating timing](generate.md) for how this is decided.
+
+## Kanji and spaces
+
+- **Kanji: Show as hiragana** writes each kanji as its reading
+  (`願い` → `ねがい`).
+- **Kanji: Show with furigana** keeps the kanji and puts the reading above
+  them. When a chunk starts inside a kanji (the が of `願`), the reading lights
+  up in two parts. The file is named `<song>-furigana.ttml`. AMLL shows
+  furigana; other players may not. See [TTML output](ttml.md#furigana).
+- **Space after each chunk** (on by default) puts a space between the chunks
+  of a line, so you can see where each one starts. Spaces written in the
+  lyrics always stay.
+
+Like the display offset, both choices only change the downloaded file. Change
+them and press **Download TTML** again; no new run is needed.
 
 ## Check and fix by ear
 
@@ -103,9 +121,10 @@ file. It holds:
 | `vocals.wav` | The voice, taken out of the song. Kept so the song is separated only once. |
 | `lyrics.txt` | The lyrics you pasted. |
 | `auto_chu.json` | The timing that Kizami made ([format](timing-json-format.md)). |
-| `<song>.ttml` | The last TTML file you downloaded. |
+| `<song>.ttml`, `<song>-furigana.ttml` | The last TTML file you downloaded, with kanji as hiragana or with furigana. |
 | `tagger.json`, `tagger_labels.txt` | Your fixes, once you save them in the tagger. |
 | `source.json` | Which song file the vocal track came from. |
+| `_uploads/` (in the work folder) | The song file while it waits for a run. Removed after the run. |
 
 When you run the same song again with changed lyrics, earlier fixes no longer
 match, so `tagger.json` is renamed to `tagger.json.prev`.

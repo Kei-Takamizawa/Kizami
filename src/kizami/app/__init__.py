@@ -25,8 +25,6 @@ import json
 import os
 import re
 import secrets
-import shutil
-import tempfile
 import threading
 import time
 import traceback
@@ -39,7 +37,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from kizami.ttml import MAX_OFFSET_MS, TtmlError, document_to_ttml, load_for_export
+from kizami.ttml import MAX_OFFSET_MS, TtmlError, TtmlOutput, load_for_export, readings_for, render_ttml
 
 DEFAULT_PORT = 8766
 DEFAULT_WORK_DIR = "kizami-songs"
@@ -52,6 +50,8 @@ LYRICS = "lyrics.txt"
 TIMING = "auto_chu.json"
 TAGGER_PROJECT = "tagger.json"
 SOURCE = "source.json"
+UPLOADS = "_uploads"  # in the work folder: song files while they wait for a run
+STALE_UPLOAD_S = 3600  # leftovers older than this are removed when the app starts
 
 _INDEX_PATH = Path(__file__).with_name("index.html")
 _JOB_PATH = re.compile(r"^/api/jobs/([A-Za-z0-9_-]{8,64})(/ttml|/tagger)?$")
@@ -74,7 +74,9 @@ class _HttpError(Exception):
 
 def safe_name(name: str, fallback: str = "song") -> str:
     """A file or folder name made from ``name``: letters, digits, spaces, ``-`` ``_`` ``.`` only."""
-    stem = unicodedata.normalize("NFC", Path(name.replace("\\", "/")).stem)
+    base = name.replace("\\", "/").rsplit("/", 1)[-1]
+    dot = base.rfind(".")
+    stem = unicodedata.normalize("NFC", base[:dot] if dot > 0 else base)  # not Path.stem: it changed in Python 3.14
     kept = "".join(c if (c.isalnum() or c in " -_.") else "_" for c in stem).strip(" ._")
     kept = re.sub(r"_+", "_", kept)[:60].strip(" ._")
     return kept or fallback
@@ -127,7 +129,8 @@ class Job:
             "seconds": round(end - self.started, 1),
             "folder": str(self.folder) if self.folder else None,
             "counts": self.counts,
-            "ttml_name": f"{self.name}.ttml",
+            "ttml_name": ttml_name(self.name, ruby=False),
+            "ruby_ttml_name": ttml_name(self.name, ruby=True),
             "tagger_saved": tagger_saved,
             "tagger_url": self.tagger_url,
             "offset_ms": self.offset_ms,
@@ -158,7 +161,19 @@ class App:
         self._lock = threading.Lock()
         self._pipeline = pipeline or run_pipeline
         self._tagger_starter = tagger_starter or start_tagger
-        self._upload_dir = Path(tempfile.mkdtemp(prefix="kizami-app-"))
+        self._upload_dir = self.work_dir / UPLOADS
+        self._upload_dir.mkdir(exist_ok=True)
+        self._remove_stale_uploads()
+
+    def _remove_stale_uploads(self) -> None:
+        """Song copies left by an app that was stopped hard (an upload in progress is newer)."""
+        now = time.time()
+        for path in self._upload_dir.iterdir():
+            try:
+                if path.is_file() and now - path.stat().st_mtime > STALE_UPLOAD_S:
+                    path.unlink()
+            except OSError:
+                pass
 
     # -- setup checks ------------------------------------------------------
 
@@ -257,21 +272,26 @@ class App:
             raise AppError("no such job")
         return job
 
-    def ttml(self, job: Job, offset_ms: int, use_tagger: bool) -> tuple[str, str]:
-        """The TTML text for a finished job, and the name of the file it was saved to."""
+    def ttml(
+        self, job: Job, offset_ms: int, use_tagger: bool, *, ruby: bool = False, chunk_spaces: bool = True
+    ) -> tuple[TtmlOutput, str]:
+        """The TTML for a finished job, and the name of the file it was saved to."""
         if job.state != "done" or job.folder is None:
             raise AppError("the TTML file is not ready yet")
-        return self.write_ttml(job, offset_ms, use_tagger)
+        return self.write_ttml(job, offset_ms, use_tagger, ruby=ruby, chunk_spaces=chunk_spaces)
 
-    def write_ttml(self, job: Job, offset_ms: int, use_tagger: bool) -> tuple[str, str]:
+    def write_ttml(
+        self, job: Job, offset_ms: int, use_tagger: bool, *, ruby: bool = False, chunk_spaces: bool = True
+    ) -> tuple[TtmlOutput, str]:
         assert job.folder is not None
         source = job.folder / (TAGGER_PROJECT if use_tagger else TIMING)
         if not source.is_file():
             raise AppError(f"{source.name} is not in the song folder")
-        text = make_ttml(source, job.folder / VOCALS, offset_ms, job.title, job.artist)
-        out = job.folder / f"{job.name}.ttml"
-        out.write_text(text, encoding="utf-8")
-        return text, out.name
+        result = make_ttml(source, job.folder / VOCALS, offset_ms, job.title, job.artist,
+                           ruby=ruby, chunk_spaces=chunk_spaces)  # fmt: skip
+        out = job.folder / ttml_name(job.name, ruby=ruby)
+        out.write_text(result.text, encoding="utf-8")
+        return result, out.name
 
     def open_tagger(self, job: Job) -> str:
         if job.state != "done" or job.folder is None:
@@ -281,12 +301,38 @@ class App:
         return job.tagger_url
 
     def close(self) -> None:
-        shutil.rmtree(self._upload_dir, ignore_errors=True)
+        """Remove the song files that were uploaded but never used."""
+        with self._lock:
+            waiting, self.uploads = list(self.uploads.values()), {}
+        for upload in waiting:
+            upload.path.unlink(missing_ok=True)
+        try:
+            self._upload_dir.rmdir()  # only when empty: another app may share the work folder
+        except OSError:
+            pass
 
 
-def make_ttml(source: Path, vocals: Path | None, offset_ms: int, title: str = "", artist: str = "") -> str:
-    """TTML text from a timing file or tagger project, with ends from the vocal track if it is there."""
+def ttml_name(name: str, *, ruby: bool) -> str:
+    return f"{name}-furigana.ttml" if ruby else f"{name}.ttml"
+
+
+def make_ttml(
+    source: Path,
+    vocals: Path | None,
+    offset_ms: int,
+    title: str = "",
+    artist: str = "",
+    *,
+    ruby: bool = False,
+    chunk_spaces: bool = True,
+) -> TtmlOutput:
+    """TTML from a timing file or tagger project, with ends from the vocal track if it is there.
+
+    With ``ruby``, a tagger project takes its furigana from the generated
+    timing (``auto_chu.json``) next to it.
+    """
     doc = load_for_export(source)
+    readings = readings_for(source) if ruby and source.name == TAGGER_PROJECT else None
     if vocals is not None and vocals.is_file():
         from kizami.loudness import LoudnessError, add_end_times, loudness_from_wav
 
@@ -294,7 +340,8 @@ def make_ttml(source: Path, vocals: Path | None, offset_ms: int, title: str = ""
             doc = add_end_times(doc, loudness_from_wav(vocals))
         except LoudnessError as exc:
             raise AppError(str(exc)) from exc
-    return document_to_ttml(doc, offset_ms=offset_ms, title=title or None, artists=[artist] if artist else [])
+    return render_ttml(doc, offset_ms=offset_ms, title=title or None, artists=[artist] if artist else [],
+                       chunk_spaces=chunk_spaces, ruby=ruby, readings=readings)  # fmt: skip
 
 
 def run_pipeline(job: Job, upload: Upload, options: dict, app: App) -> None:
@@ -479,13 +526,18 @@ class _Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     raise _HttpError(HTTPStatus.BAD_REQUEST, "offset_ms must be a whole number") from None
                 use_tagger = query.get("source", ["generated"])[0] == "tagger"
+                ruby = query.get("ruby", ["0"])[0] == "1"
+                chunk_spaces = query.get("spaces", ["1"])[0] != "0"
                 try:
-                    text, name = self.app.ttml(job, offset, use_tagger)
+                    result, name = self.app.ttml(job, offset, use_tagger, ruby=ruby, chunk_spaces=chunk_spaces)
                 except (AppError, TtmlError) as exc:
                     raise _HttpError(HTTPStatus.CONFLICT, str(exc)) from None
                 disposition = f"attachment; filename=\"{_ascii_name(name)}\"; filename*=UTF-8''{quote(name)}"
-                self._send(HTTPStatus.OK, text.encode("utf-8"), "application/ttml+xml; charset=utf-8",
-                           extra={"Content-Disposition": disposition})  # fmt: skip
+                self._send(HTTPStatus.OK, result.text.encode("utf-8"), "application/ttml+xml; charset=utf-8",
+                           extra={"Content-Disposition": disposition,
+                                  "X-Kizami-Lines": str(result.lines),
+                                  "X-Kizami-Furigana-Lines": str(result.ruby_lines),
+                                  "X-Kizami-Lines-Without-Furigana": str(result.lines_without_readings)})  # fmt: skip
                 return
             raise _HttpError(HTTPStatus.NOT_FOUND, "not found")
         except _HttpError as error:

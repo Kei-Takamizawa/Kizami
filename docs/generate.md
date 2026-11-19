@@ -49,7 +49,7 @@ The `ffmpeg` program must be installed to read the audio for the models.
 | Option | Default | Meaning |
 |---|---|---|
 | `--level` | `chu` | `chu` (the timing to use). `dai`, `sho` or `all` write the other two levels too, for comparison. |
-| `--kanji` | `hiragana` | `hiragana` writes kanji as their reading, one unit per mora. `keep` writes them as in `lyrics.txt`; a kanji then never splits. |
+| `--kanji` | `hiragana` | `hiragana` writes kanji as their reading, one unit per mora, and records which reading belongs to which kanji (`lines[].ruby`), so that `kizami ttml --ruby` can show furigana. `keep` writes them as in `lyrics.txt`; a kanji then never splits. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
 | `--cache` | none | Folder for the model outputs. A rerun on the same audio then takes a few seconds. |
