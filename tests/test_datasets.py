@@ -66,6 +66,13 @@ def test_csd_rows_without_a_hangul_block_are_skipped(tmp_path):
     assert sum(len(line.chunks) for line in doc.lines) == 5
 
 
+def test_csd_romanized_syllables_pair_with_the_blocks_in_order(tmp_path):
+    rows = [(1.0, 1.4, 60, "g_a"), (1.5, 1.9, 62, "n_a"), (2.0, 2.8, 64, "d_a"), (4.0, 4.5, 60, "r_a"), (4.5, 5.25, 59, "m_a")]
+    doc = csd_reference(*_csd(tmp_path, rows=rows))
+    assert [[c.text for c in line.chunks] for line in doc.lines] == [["가", "나 ", "다"], ["라", "마"]]
+    assert doc.lines[0].chunks[2].start_ms == 2000
+
+
 def test_csd_note_count_must_match_the_blocks(tmp_path):
     with pytest.raises(DatasetError, match="4 sung syllables but the lyrics have 5"):
         csd_reference(*_csd(tmp_path, rows=[(1.0, 1.4, 60, "가"), (1.5, 1.9, 62, "나"), (2.0, 2.8, 64, "다"), (4.0, 4.5, 60, "라")]))

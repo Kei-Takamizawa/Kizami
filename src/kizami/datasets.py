@@ -4,9 +4,10 @@
   line), its word times (``SONG.csv``: ``word_start,word_end,line_end`` in
   seconds) and the lyrics (``SONG.txt``). Each word becomes one chunk.
 * Children's Song Dataset (CSD), Korean part: note times
-  (``csv/krNNNx.csv``: ``start,end,pitch,syllable`` in seconds, one Hangul
-  block per note) and the lyrics (``lyric/krNNNx.txt``). Each Hangul block
-  becomes one chunk.
+  (``csv/krNNNx.csv``: ``start,end,pitch,syllable`` in seconds, one sung
+  syllable per note, written in romanized letters such as ``s_a_ng``) and
+  the lyrics (``lyric/krNNNx.txt``). The notes pair with the Hangul blocks
+  of the lyrics in order; each block becomes one chunk.
 
 The files stay where the user keeps them; nothing is downloaded here.
 Standard library only.
@@ -66,10 +67,11 @@ def _nfc(text: str) -> str:
 
 
 def csd_reference(notes_csv: str | Path, lyrics_txt: str | Path) -> TimingDocument:
-    """One chunk per Hangul block, grouped into the lines of the lyrics file. Notes without a
-    Hangul block (rests, empty syllables) are skipped. Errors name positions, never lyric text."""
+    """One chunk per Hangul block, grouped into the lines of the lyrics file. The notes pair with
+    the blocks in order; a note whose syllable has no letter (a rest) is skipped, and a syllable
+    written in Hangul must be that block. Errors name positions, never lyric text."""
     with open(notes_csv, encoding="utf-8-sig", newline="") as f:
-        rows = [r for r in csv.DictReader(f) if _is_block(_nfc((r.get("syllable") or "").strip()))]
+        rows = [r for r in csv.DictReader(f) if any(c.isalpha() for c in (r.get("syllable") or ""))]
     texts = [_nfc(t.strip()) for t in Path(lyrics_txt).read_text(encoding="utf-8-sig").splitlines() if t.strip()]
     blocks = sum(_is_block(c) for t in texts for c in t)
     if len(rows) != blocks:
@@ -81,7 +83,8 @@ def csd_reference(notes_csv: str | Path, lyrics_txt: str | Path) -> TimingDocume
         for j, i in enumerate(at):
             row = rows[k]
             k += 1
-            if _nfc(row["syllable"].strip()) != t[i]:
+            sung = _nfc(row["syllable"].strip())
+            if _is_block(sung) and sung != t[i]:
                 raise DatasetError(f"{notes_csv}: sung syllable {k} does not match the lyrics")
             start, end = _ms(row["start"]), _ms(row["end"])
             text = t[0 if j == 0 else i : at[j + 1] if j + 1 < len(at) else len(t)]
