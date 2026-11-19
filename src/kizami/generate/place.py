@@ -30,7 +30,7 @@ DEFAULTS = {
     "lag": -0.02,  # added to the aligned time before searching (Japanese)
     "lag_en": -0.03,  # ... for English units (MMS time; JamendoLyrics, 2026-11-19)
     "lag_es": 0.0,  # ... for Spanish units (MMS time; JamendoLyrics, 2026-11-19)
-    "lag_ko": -0.02,  # ... for Korean units (MMS time; not tuned yet)
+    "lag_ko": 0.01,  # ... for Korean units (MMS time; Children's Song Dataset, 2026-11-19)
     "before": 0.07,  # search window before the aligned time (s)
     "after": 0.05,  # ... and after it
     "tau": 0.05,  # closeness weight: strength * exp(-distance / tau)
@@ -54,7 +54,7 @@ DEFAULTS = {
     "mms_tc": 0.02,  # ... the kana model's confidence is below this
     "mms_tm": 0.02,  # ... the MMS confidence is at least this
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
-    "mms_star": 0.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics (trial)
+    "mms_star": 1.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
     "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk

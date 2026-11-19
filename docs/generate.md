@@ -50,7 +50,9 @@ times, except one case: the first start of a line right after a line with
 Latin text can move, because it starts where the sound of the line before
 ends. Measured 2026-11-19 on the four Japanese test songs at the medium level:
 2 of 1,052 starts on Japanese-only lines moved, and both moved closer to the
-owner's times.
+owner's times. The star token of the letter model (`mms_star`, see the
+measurements below) can also change where that second model points; on the
+same songs it changed the matched starts by one (+1).
 
 ## Models
 
@@ -186,23 +188,34 @@ the time.
 to songs 1 to 4; 4 of the 16 have no clear attack and are marked uncertain.
 Of the 9 that start on a character with a reference time, 6 are within 50 ms.
 
-**English and Spanish** (measured 2026-11-19 on JamendoLyrics MultiLang, 20
-songs each, vocals separated with Demucs, `--level dai --anchor attack`).
-Recall is the share of the dataset's word starts matched within 50 ms. The
-lags were tuned on these songs (both halves of each set agreed), so the
-numbers after tuning are optimistic.
+**Korean, English and Spanish** (measured 2026-11-19). English and Spanish:
+JamendoLyrics MultiLang, 20 songs each, vocals separated with Demucs,
+`--level dai --anchor attack`, against the dataset's word starts. Korean: the
+Children's Song Dataset, 100 solo recordings of 50 children's songs,
+`--level sho --anchor attack`, against its note starts. Recall is the share of
+reference starts matched within 50 ms. The lags were tuned on these same
+songs (both halves of each set agreed), so the tuned numbers are optimistic.
 
-| | Words | Recall, lag −0.02 | Recall, tuned lag |
+| | Starts | Before tuning (lag −0.02) | Now (tuned lag, star token) |
 |---|---|---|---|
-| English | 5,693 | 53.6% (95% interval 52.4 to 54.9%) | 55.0% (`lag_en` −0.03) |
-| Spanish | 5,269 | 55.4% (54.0 to 56.7%) | 60.3% (`lag_es` 0.00) |
+| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 55.7% (`lag_en` −0.03) |
+| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 60.5% (`lag_es` 0.00) |
+| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | 62.9% (`lag_ko` +0.01) |
 
-This is far below the 90% target. The biggest causes: in English, 14.6% of
-the words were placed more than 1 second away (whole passages aligned to the
-wrong place), and many more were 50 to 100 ms off. In Spanish, 782 words
-joined to the word before by sinalefa never start a chunk at this level;
-without them, recall is 65.0% before tuning. Korean, and the owner's own
-songs in every language, are not measured yet.
+This is far below the 90% target. What the misses are:
+
+- **English:** 13.6% of the words are placed more than 1 second away (whole
+  passages aligned to the wrong place); many more are 50 to 100 ms off.
+- **Spanish:** 782 words joined to the word before by sinalefa never start a
+  chunk at this level; without them, recall is 71.0%.
+- **Korean:** almost all syllables are close (99% within 1 s, 82% within
+  100 ms before tuning) but not within 50 ms. The dataset marks note starts,
+  which can fall later than where the syllable's first consonant starts.
+
+The star token (`mms_star`, on by default) lets the letter model skip singing
+between lines that is not in the lyrics: +36 English words, +11 Spanish, no
+change for Korean, and +1 start on the Japanese songs. The owner's own songs
+in each language are not measured yet.
 
 Turn a JamendoLyrics annotation into a reference with
 
