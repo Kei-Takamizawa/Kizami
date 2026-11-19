@@ -195,6 +195,8 @@ def _spanish(word: str) -> list[str]:
         n = len(cluster)
         if n <= 1:
             keep = 0
+        elif cluster[-2:] in ("qu", "gu"):  # the silent u: one consonant with the q or g before it
+            keep = n - 2
         elif cluster[-2:] in ES_PAIRS:
             keep = n - 2
         else:

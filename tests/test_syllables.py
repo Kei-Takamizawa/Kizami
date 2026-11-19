@@ -49,6 +49,16 @@ def test_english_syllables(word, parts):
         ("Bailando", ["Bai", "lan", "do"]),
         ("y", ["y"]),
         ("muy", ["muy"]),
+        ("porque", ["por", "que"]),
+        ("aquí", ["a", "quí"]),
+        ("parque", ["par", "que"]),
+        ("sigue", ["si", "gue"]),
+        ("seguir", ["se", "guir"]),
+        ("pequeño", ["pe", "que", "ño"]),
+        ("alguien", ["al", "guien"]),
+        ("Miguel", ["Mi", "guel"]),
+        ("pingüino", ["pin", "güi", "no"]),
+        ("agua", ["a", "gua"]),
     ],
 )
 def test_spanish_syllables(word, parts):
