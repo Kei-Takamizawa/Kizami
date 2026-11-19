@@ -900,3 +900,40 @@ def test_a_leading_apostrophe_belongs_to_its_word_and_is_not_a_letter():
     assert [a["letters"] for a in starts] == ["cause", "cause", "til"]
     assert all(a["word_start"] for a in starts)
     assert [a["letters"] for a in _atoms("don't", latin="en")[0]] == ["don't"]
+
+
+def _tone_in_silence(level=0.3, floor=0.0):
+    sr = 16000
+    rng = np.random.default_rng(0)
+    x = floor * rng.standard_normal(3 * sr)
+    t = np.arange(sr) / sr
+    x[sr : 2 * sr] = level * np.sin(2 * np.pi * 220 * t)
+    return x.astype(np.float32)
+
+
+def test_voiced_frames_mark_singing_and_a_margin_around_it():
+    from kizami.generate.align import voiced_frames
+
+    voiced = voiced_frames(_tone_in_silence(), 150, pad=3)
+    assert voiced.dtype == bool and len(voiced) == 150
+    assert not voiced[:47].any() and voiced[47:103].all() and not voiced[103:].any()
+
+
+def test_voiced_frames_ignore_a_low_noise_floor():
+    from kizami.generate.align import voiced_frames
+
+    voiced = voiced_frames(_tone_in_silence(floor=0.002), 150, pad=0)
+    assert voiced[50:100].all() and not voiced[:50].any() and not voiced[100:].any()
+
+
+def test_silence_penalty_lowers_only_letters_outside_singing():
+    from kizami.generate.align import mask_silence
+
+    em = np.zeros((4, 5), dtype=np.float32)
+    voiced = np.array([True, False, True, False])
+    out = mask_silence(em, voiced, 8.0)
+    assert (out[[0, 2]] == 0).all()  # sung frames unchanged
+    assert (out[[1, 3], 1:4] == -8.0).all()  # letters in silence
+    assert (out[:, 0] == 0).all() and (out[:, 4] == 0).all()  # blank and star stay
+    assert (em == 0).all()  # the input is not changed
+    assert mask_silence(em, voiced, 0.0) is em

@@ -137,6 +137,40 @@ def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None) 
     return em
 
 
+def voiced_frames(pcm: np.ndarray, n_frames: int, share: float = 0.1, pad: int = 3) -> np.ndarray:
+    """Per 20 ms model frame, whether the vocal track has singing there.
+
+    A frame is sung when its loudness (RMS) is at least ``share`` of the
+    song's typical sung loudness (the median over frames above 1% of the
+    loudest). ``pad`` frames on each side are added, so a quiet consonant at
+    the edge of a sung stretch still counts.
+    """
+    x = np.asarray(pcm, dtype=np.float64)
+    x = np.pad(x, (0, max(0, n_frames * STRIDE - len(x))))[: n_frames * STRIDE]
+    rms = np.sqrt((x.reshape(n_frames, STRIDE) ** 2).mean(axis=1)) if n_frames else np.zeros(0)
+    if not rms.size or rms.max() <= 0:
+        return np.zeros(n_frames, dtype=bool)
+    active = rms[rms > 0.01 * np.percentile(rms, 99)]
+    voiced = rms >= share * np.median(active)
+    if pad > 0:
+        voiced = np.convolve(voiced.astype(int), np.ones(2 * pad + 1, dtype=int), mode="same") > 0
+    return voiced
+
+
+def mask_silence(em: np.ndarray, voiced: np.ndarray, penalty: float) -> np.ndarray:
+    """``em`` with every letter made ``penalty`` less likely in frames without singing, so the
+    letter model does not place lyrics in a silent intro or outro. Blank (first column) and
+    star (last column) stay as they are. A ``penalty`` of 0 returns ``em`` itself."""
+    if penalty <= 0:
+        return em
+    out = em.copy()
+    quiet = np.zeros(len(em), dtype=bool)
+    n = min(len(em), len(voiced))
+    quiet[:n] = ~np.asarray(voiced[:n], dtype=bool)
+    out[quiet, 1:-1] -= penalty
+    return out
+
+
 def mms_tokens(atoms: list[dict], star: bool = False) -> tuple[list[str], list[int]]:
     """The MMS letters of all units in order, and the index of the unit each letter belongs to.
 

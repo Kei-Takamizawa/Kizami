@@ -236,6 +236,8 @@ def generate(
                 em2 = align.mms_emissions(pcm16k, mms_file, key)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise GenerateError(f"the second model could not be loaded from {mms_file} ({exc})") from exc
+            if p["mms_silence"] > 0:  # keep the lyrics out of silent stretches of the vocals
+                em2 = align.mask_silence(em2, align.voiced_frames(pcm16k, len(em2)), p["mms_silence"])
             try:
                 align.mms_align(em2, atoms, star=bool(p["mms_star"]))
             except RuntimeError as exc:
