@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 from xml.sax.saxutils import escape, quoteattr
 
+from kizami.generate.lang import guess_latin, script_of
 from kizami.timing import (
     FORMAT_NAME,
     Chunk,
@@ -180,13 +182,27 @@ def _knows_spaces(doc: TimingDocument) -> bool:
 
 
 def _main_lang(doc: TimingDocument) -> str:
-    """The language with the most units in ``meta.languages``, else ``ja``."""
+    """The language with the most units in ``meta.languages``. Without it (a tagger project, an
+    older file), the script of most chunks: Hangul is ``ko``, Latin letters ``meta.latin`` or a
+    guess from the words, anything else ``ja``."""
     counts = doc.meta.get("languages")
     if isinstance(counts, dict) and counts:
         best = max(counts.items(), key=lambda kv: (kv[1] if isinstance(kv[1], int) else 0, kv[0]))[0]
         if isinstance(best, str) and best:
             return best
-    return "ja"
+    scripts = Counter(
+        next((s for s in map(script_of, chunk.text) if s), "") for line in doc.lines for chunk in line.chunks
+    )
+    scripts.pop("", None)
+    if not scripts:
+        return "ja"
+    best = max(("ja", "ko", "latin"), key=lambda s: scripts[s])  # a tie goes to the first
+    if best == "latin":
+        latin = doc.meta.get("latin")
+        if latin in ("en", "es"):
+            return latin
+        return guess_latin(w for line in doc.lines for w in "".join(c.text for c in line.chunks).split())
+    return best
 
 
 def _words(line: Line, ends: list[int], chunk_spaces: bool, guess_spaces: bool = True) -> list[_Word]:

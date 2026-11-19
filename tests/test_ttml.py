@@ -286,7 +286,29 @@ def test_lang_comes_from_the_document():
     ko = TimingDocument(lines=doc.lines, meta={"languages": {"en": 4, "ko": 9}})
     assert 'xml:lang="ko"' in document_to_ttml(ko)
     assert 'xml:lang="en"' in document_to_ttml(ko, lang="en")
-    assert 'xml:lang="ja"' in document_to_ttml(doc)
+    assert 'xml:lang="ko"' in document_to_ttml(doc)  # no languages in meta: from the letters
+
+
+def test_lang_without_meta_comes_from_the_letters_of_the_chunks():
+    ja = doc_of(([Chunk("夜", 0), Chunk("空 ", 200), Chunk("baby", 400, 600)], None))
+    assert 'xml:lang="ja"' in document_to_ttml(ja)
+    en = doc_of(([Chunk("I ", 0), Chunk("love ", 200), Chunk("사", 400, 600)], None))
+    assert 'xml:lang="en"' in document_to_ttml(en)
+    es = TimingDocument(lines=en.lines, meta={"latin": "es"})
+    assert 'xml:lang="es"' in document_to_ttml(es)
+    guessed = doc_of(([Chunk("te ", 0), Chunk("quie", 200), Chunk("ro ", 300), Chunk("mi ", 400), Chunk("a", 500), Chunk("mor", 600, 800)], None))
+    assert 'xml:lang="es"' in document_to_ttml(guessed)
+    digits = doc_of(([Chunk("1 ", 0), Chunk("2", 200, 400)], None))
+    assert 'xml:lang="ja"' in document_to_ttml(digits)
+
+
+def test_a_tagger_project_of_a_korean_song_is_korean():
+    project = {
+        "format": "kizami-tagger",
+        "version": 1,
+        "lines": [{"units": [{"text": "사", "start_ms": 0}, {"text": "랑", "start_ms": 200, "end_ms": 400}]}],
+    }
+    assert 'xml:lang="ko"' in document_to_ttml(document_from_tagger_project(project))
 
 
 def test_cli_ttml_lang_defaults_to_the_document():
