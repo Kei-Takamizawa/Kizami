@@ -858,3 +858,24 @@ def test_cli_generate_takes_the_latin_language():
     assert _build_parser().parse_args(["generate", "song", "--latin", "es"]).latin == "es"
     with pytest.raises(SystemExit):
         _build_parser().parse_args(["generate", "song", "--latin", "fr"])
+
+
+def test_a_line_without_letters_in_a_song_without_japanese_is_not_japanese():
+    atoms, _, lines = _atoms("사랑해 너를", "3, 2, 1", "사랑해")
+    count_in = [a for a in atoms if a["line"] == 1]
+    assert _shown(count_in, lines) == ["3", "2", "1"]
+    assert {a["lang"] for a in atoms} == {"ko"}
+    assert [a["letters"] for a in count_in] == ["*", "*", "*"]
+    assert [a["word_start"] for a in count_in] == [True, True, True]
+    assert [a["line_first"] for a in count_in] == [True, False, False]
+
+
+def test_a_line_without_letters_takes_the_main_language_of_the_song():
+    atoms, used, _ = _atoms("I love you baby", "5, 6, 7, 8", "사랑해")
+    assert used == "en"
+    assert {a["lang"] for a in atoms if a["line"] == 1} == {"en"}
+
+
+def test_a_line_without_letters_in_a_japanese_song_stays_japanese():
+    atoms, _, _ = _atoms("夜空に星が光る", "3, 2, 1")
+    assert {a["lang"] for a in atoms if a["line"] == 1} == {"ja"}

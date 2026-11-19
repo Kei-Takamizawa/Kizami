@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 from kizami.generate.hangul import word_letters
@@ -351,9 +352,24 @@ def atoms_for(lines: list[dict], vocab: dict, latin: str = "auto") -> tuple[list
             for a, b in _words(line["display"], start, stop, "latin", sc)
         ]
         latin = guess_latin(latin_words)
+    counts = Counter(x for sc in scripts_of for x in sc if x)
+    song_has_ja = "ja" in counts or not counts
+    main_lang = "ko" if counts["ko"] > counts["latin"] else latin
 
     for li, line in enumerate(lines):
         runs = runs_of_line[li]
+        if not runs and not song_has_ja:
+            # no letters (a count-in like "3, 2, 1") in a song without Japanese:
+            # one unit per group of digits, sung in the song's main language
+            for k, m in enumerate(re.finditer(r"[^\W_]+", line["display"])):
+                atoms.append(
+                    {
+                        "line": li, "offset": m.start(), "end": m.end(), "kana": ["*"], "hiragana": None,
+                        "word_start": True, "dependent": False, "line_first": k == 0,
+                        "lang": main_lang, "letters": "*", "syllable": m.group(),
+                    }
+                )  # fmt: skip
+            continue
         if all(script == "ja" for _, _, script in runs):
             atoms.extend(japanese_units(li, line, True))  # today's path, the whole line
             continue
