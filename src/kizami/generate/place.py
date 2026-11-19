@@ -54,6 +54,7 @@ DEFAULTS = {
     "mms_tc": 0.02,  # ... the kana model's confidence is below this
     "mms_tm": 0.02,  # ... the MMS confidence is at least this
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
+    "mms_star": 0.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics (trial)
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
     "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk

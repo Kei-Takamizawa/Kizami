@@ -730,6 +730,17 @@ def test_mms_letters_come_from_the_units():
     assert owner == [0, 0, 1, 1, 2, 2, 2, 2, 2]
 
 
+def test_star_tokens_open_every_line_and_close_the_song():
+    from kizami.generate.align import mms_tokens
+
+    atoms = [_lang_atom(1.0, "en", "hi"), _lang_atom(2.0, "en", "yo"), _lang_atom(3.0, "en", "ok")]
+    atoms[2]["line"] = 1
+    letters, owner = mms_tokens(atoms, star=True)
+    assert "".join(letters) == "*hiyo*ok*"
+    assert owner == [-1, 0, 0, 1, 1, -1, 2, 2, -1]
+    assert mms_tokens(atoms)[0] == list("hiyook")
+
+
 def test_units_without_letters_fall_back_to_romaji():
     from kizami.generate.align import mms_tokens
 

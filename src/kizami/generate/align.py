@@ -137,32 +137,41 @@ def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None) 
     return em
 
 
-def mms_tokens(atoms: list[dict]) -> tuple[list[str], list[int]]:
+def mms_tokens(atoms: list[dict], star: bool = False) -> tuple[list[str], list[int]]:
     """The MMS letters of all units in order, and the index of the unit each letter belongs to.
 
     A unit's letters are its ``letters`` (set for every language by
     ``text.atoms_for``), or the romaji of its kana for a unit without them.
+    With ``star``, a ``*`` token (owner -1) opens every line and closes the
+    song, so singing that is not in the lyrics between lines (ad-libs,
+    backing vocals) need not be matched to lyric letters.
     """
     letters, owner = [], []
     for ai, a in enumerate(atoms):
+        if star and (ai == 0 or a.get("line") != atoms[ai - 1].get("line")):
+            letters.append("*")
+            owner.append(-1)
         word = a.get("letters")
         if word is None:
             word = romaji(a["kana"])
         for ch in word:
             letters.append(ch)
             owner.append(ai)
+    if star and letters:
+        letters.append("*")
+        owner.append(-1)
     return letters, owner
 
 
-def mms_align(em: np.ndarray, atoms: list[dict]) -> None:
+def mms_align(em: np.ndarray, atoms: list[dict], star: bool = False) -> None:
     """Set ``mms`` (start of the first letter), ``mms_last`` (start of the last letter) and
-    ``mms_conf`` on each unit; None where it has no letters."""
+    ``mms_conf`` on each unit; None where it has no letters. ``star``: see ``mms_tokens``."""
     import torch
     import torchaudio
     import torchaudio.functional as F
 
     d = torchaudio.pipelines.MMS_FA.get_dict(star="*")
-    letters, owner = mms_tokens(atoms)
+    letters, owner = mms_tokens(atoms, star=star)
     ids = [d[ch] for ch in letters]
     for a in atoms:
         a["mms"], a["mms_last"], a["mms_conf"] = None, None, 0.0
@@ -174,6 +183,8 @@ def mms_align(em: np.ndarray, atoms: list[dict]) -> None:
         raise RuntimeError(f"letter alignment lost tokens ({len(spans)} of {len(ids)})")
     conf: dict[int, float] = {}
     for sp, ai in zip(spans, owner):
+        if ai < 0:
+            continue  # a star token
         if atoms[ai]["mms"] is None:
             atoms[ai]["mms"] = sp.start * STRIDE / SR
         atoms[ai]["mms_last"] = sp.start * STRIDE / SR

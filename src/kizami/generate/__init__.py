@@ -237,7 +237,7 @@ def generate(
             except (OSError, RuntimeError, ValueError) as exc:
                 raise GenerateError(f"the second model could not be loaded from {mms_file} ({exc})") from exc
             try:
-                align.mms_align(em2, atoms)
+                align.mms_align(em2, atoms, star=bool(p["mms_star"]))
             except RuntimeError as exc:
                 raise GenerateError(f"the second model could not align the lyrics ({exc})") from exc
             align.adopt_mms(atoms)
