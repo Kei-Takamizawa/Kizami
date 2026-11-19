@@ -44,6 +44,11 @@ _CSP = (
 )
 
 
+def _is_timing_name(name: str) -> bool:
+    """A JSON file other than the tagger's own: a timing file such as ``auto_chu.json``."""
+    return name.lower().endswith(".json") and name != PROJECT_NAME
+
+
 class TaggerError(ValueError):
     """A problem to show to the user without a traceback."""
 
@@ -84,7 +89,7 @@ class Session:
         return {
             "folder": self.folder.name,
             "audio": [p.name for p in files if p.suffix.lower() in AUDIO_SUFFIXES],
-            "texts": [p.name for p in files if p.suffix.lower() == ".txt"],
+            "texts": [p.name for p in files if p.suffix.lower() == ".txt" or _is_timing_name(p.name)],
             "lyrics": LYRICS_NAME if (self.folder / LYRICS_NAME).is_file() else None,
             "project": PROJECT_NAME if (self.folder / PROJECT_NAME).is_file() else None,
             "labels": self.labels,
@@ -97,7 +102,7 @@ class Session:
             raise TaggerError(f"'{name}' is not a file name in the song folder")
         path = self.folder / name
         suffix = path.suffix.lower()
-        if suffix not in AUDIO_SUFFIXES and suffix != ".txt" and name != PROJECT_NAME:
+        if suffix not in AUDIO_SUFFIXES and suffix not in (".txt", ".json"):
             raise TaggerError(f"'{name}': this file type cannot be opened")
         # A symbolic link must not lead out of the song folder.
         if not path.is_file() or path.resolve().parent != self.folder:

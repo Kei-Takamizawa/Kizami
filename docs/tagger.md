@@ -24,7 +24,7 @@ Options:
 
 | Option | Meaning |
 |---|---|
-| `--labels NAME` | Start from a label file in the folder, for example `auto_labels.txt`. Ignored when saved work exists. |
+| `--labels NAME` | Start from a label file (`.txt`) or a timing file (`.json`) in the folder, for example `auto_chu.json`. A timing file brings its own lyric lines. Ignored when saved work exists. |
 | `--output NAME` | Label file to write. Default `tagger_labels.txt`. |
 | `--port N` | Port on this computer. Default 8765. Another free port is used if it is busy. |
 | `--no-browser` | Print the address and do not open the browser. |
@@ -110,8 +110,10 @@ The tagger saves by itself a moment after every change, and when you press
 
 **Load** replaces the lyrics with `lyrics.txt`, or puts the times of a label
 file on the lyrics. The label text must appear in the lyrics in the same
-order. If it does not, the labels are shown alone. Undo brings the earlier
-state back.
+order. If it does not (for example, labels in hiragana for lyrics written
+with kanji), the labels are shown alone and the lines are guessed from the
+pauses. A timing file (`.json`, such as `auto_chu.json`) replaces the lyrics
+with its own text, lines and times. Undo brings the earlier state back.
 
 These files contain lyric text. Keep them out of Git, as described in the
 [timing JSON format](timing-json-format.md).
