@@ -173,6 +173,22 @@ def test_a_medium_chunk_can_start_inside_a_kanji():
     assert chunks_for(lines, chosen, out)[0][1][3] == [("が", 1.3, False), ("い", 1.6, False), ("を", 1.9, False)]
 
 
+def test_a_long_gap_starts_a_medium_chunk_inside_its_line():
+    units = [
+        {"line": 0, "time": 1.0, "snapped": True, "strength": 2.0, "word_start": True, "dependent": False, "line_first": True},
+        {"line": 0, "time": 1.4, "snapped": True, "strength": 1.0, "word_start": False, "dependent": False, "line_first": False},
+        {"line": 0, "time": 2.4, "snapped": False, "strength": 0.0, "word_start": False, "dependent": False, "line_first": False},
+        {"line": 0, "time": 2.9, "snapped": True, "strength": 1.0, "word_start": False, "dependent": False, "line_first": False},
+        {"line": 1, "time": 9.0, "snapped": True, "strength": 1.0, "word_start": True, "dependent": True, "line_first": False},
+    ]
+
+    with_gap = [u["time"] for u in select(units, "chu", m_thr=3.0, gap=1.0)]
+
+    assert with_gap == [1.0, 2.4]  # 1.0 s after the unit before it; a new line never counts as a gap
+    assert [u["time"] for u in select(units, "chu", m_thr=3.0)] == [1.0]
+    assert [u["time"] for u in select(units, "dai", m_thr=3.0, gap=1.0)] == [1.0]
+
+
 # ---------------------------------------------------------- chunk start rules
 
 

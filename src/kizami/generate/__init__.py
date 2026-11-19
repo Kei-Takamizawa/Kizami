@@ -231,7 +231,7 @@ def generate(
         atoms = text.to_hiragana(lines, atoms)  # after the threshold, so the kanji's morae do not move it
     out.mkdir(parents=True, exist_ok=True)
     for level in levels:
-        chosen = place.select(atoms, level, p["m_thr"])
+        chosen = place.select(atoms, level, p["m_thr"], p["gap"] if p["gap"] > 0 else None)
         result.levels.append(_write_level(out, level, lines, chosen, p, atoms, kanji))
     return result
 

@@ -65,8 +65,8 @@ Measure how close a timing file is to a hand-made reference.
 `kizami generate` reads a song folder that holds `vocals.wav` (the vocal
 track, separated from the mix beforehand) and `lyrics.txt`, and writes the
 timing next to them as `auto_chu.json` and `auto_labels_chu.txt`. A chunk
-starts at each word (with its particles) and at the strongest attacks inside
-words. Kanji are written in hiragana; add `--kanji keep` to keep them as
+starts at each word (with its particles), at the strongest attacks inside
+words, and after a pause or long note of 1 second or more. Kanji are written in hiragana; add `--kanji keep` to keep them as
 written.
 
 ```

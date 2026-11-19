@@ -53,6 +53,7 @@ DEFAULTS = {
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
+    "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk
 }
 LEVELS = ("dai", "chu", "sho")
 
@@ -275,9 +276,14 @@ def chu_threshold(atoms, share) -> float:
     return float(np.quantile(extra, 1 - share)) if extra else 0.0
 
 
-def select(atoms, level, m_thr):
-    """The units that start a chunk at ``level``."""
-    out = []
+def select(atoms, level, m_thr, gap=None):
+    """The units that start a chunk at ``level``.
+
+    At level chu, with ``gap``, a unit that starts ``gap`` seconds or more
+    after the unit before it in the same line (a long note or a rest) also
+    starts a chunk.
+    """
+    out, prev = [], None
     for a in atoms:
         if a["time"] is None:
             continue
@@ -285,10 +291,13 @@ def select(atoms, level, m_thr):
             keep = is_word_start(a)
         elif level == "chu":
             keep = is_word_start(a) or (a["snapped"] and a["strength"] >= m_thr)
+            after_gap = gap is not None and prev is not None and prev["line"] == a["line"]
+            keep = keep or (after_gap and a["time"] - prev["time"] >= gap - 1e-9)
         else:
             keep = True  # every unit, with or without an attack of its own
         if keep:
             out.append(a)
+        prev = a
     return out
 
 

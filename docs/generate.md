@@ -68,7 +68,7 @@ with no clear attack of its own is `uncertain` in the JSON and starts with
 
 | Level | One chunk is |
 |---|---|
-| `chu` | a word with its particles, plus the strongest 45% of the attacks inside words |
+| `chu` | a word with its particles, plus the strongest 45% of the attacks inside words, plus any sound that comes 1 s or more after the one before it |
 | `dai` | a word with its particles, such as `夜空を` (with `--level dai` or `all`) |
 | `sho` | every unit with a sound of its own (with `--level sho` or `all`); small kana, `っ`, `ー` and a drawn-out `う` join the kana before |
 
@@ -109,6 +109,9 @@ inside a chunk.
    split into its morae, and a later mora also starts a chunk when its attack
    is at least as strong as that 45% line. The line is set before the split,
    so every other chunk start is the same as with `--kanji keep`.
+   A unit that starts 1 second or more after the unit before it in the same
+   line (after a long note or a rest) also starts a chunk, with or without a
+   strong attack (`gap` in the parameters; 0 turns it off).
 
 The parameters are in `kizami.generate.place.DEFAULTS`.
 
@@ -138,6 +141,10 @@ the owner's time in 128 of 132 cases (97.0%, 95% interval 92.5 to 98.8%) over
 the four songs. Searching wider for a strong attack when a mora has none
 nearby was tried and not kept: the extra splits it found were right only half
 the time.
+
+**The 1-second rule** (measured 2026-11-19) adds 7, 8, 1 and 0 chunk starts
+to songs 1 to 4; 4 of the 16 have no clear attack and are marked uncertain.
+Of the 9 that start on a character with a reference time, 6 are within 50 ms.
 
 ## From Python
 
