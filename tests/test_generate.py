@@ -937,3 +937,15 @@ def test_silence_penalty_lowers_only_letters_outside_singing():
     assert (out[:, 0] == 0).all() and (out[:, 4] == 0).all()  # blank and star stay
     assert (em == 0).all()  # the input is not changed
     assert mask_silence(em, voiced, 0.0) is em
+
+
+def test_digits_in_a_line_of_another_language_get_their_own_unit():
+    atoms, _, lines = _atoms("I have 2 dreams", "사랑해 1 2 3", "君と 2 people", latin="en")
+    shown = _shown(atoms, lines)
+    digits = [(lines[a["line"]]["display"][a["offset"] : a["end"]], a["lang"]) for a in atoms if a["letters"] == "*"]
+    assert digits == [("2", "en"), ("1", "ko"), ("2", "ko"), ("3", "ko"), ("2", "en")]
+    assert shown[:4] == ["I", "have", "2", "dreams"]
+    assert all(a["word_start"] for a in atoms if a["letters"] == "*")
+    for li in range(3):
+        firsts = [a["line_first"] for a in atoms if a["line"] == li]
+        assert firsts[0] and not any(firsts[1:])

@@ -417,8 +417,34 @@ def atoms_for(lines: list[dict], vocab: dict, latin: str = "auto") -> tuple[list
                         }
                     )  # fmt: skip
                 prev_word = word
-        atoms.extend(line_atoms)
+        atoms.extend(_digit_units(li, line["display"], runs, line_atoms, latin))
     return atoms, guesses, latin
+
+
+def _digit_units(li: int, display: str, runs: list, line_atoms: list[dict], latin: str) -> list[dict]:
+    """``line_atoms`` plus one unit per group of digits outside the units and outside Japanese
+    parts (``I have 2 dreams``), in the language of the nearest Korean or Latin part before it."""
+    taken = [(a["offset"], a["end"]) for a in line_atoms] + [(a, b) for a, b, sc in runs if sc == "ja"]
+    other = [(a, b, sc) for a, b, sc in runs if sc != "ja"]
+    extra = []
+    for m in re.finditer(r"\d+", display):
+        if not other or any(a <= m.start() < b for a, b in taken):
+            continue
+        before = [r for r in other if r[0] < m.start()]
+        script = (before[-1] if before else other[0])[2]
+        extra.append(
+            {
+                "line": li, "offset": m.start(), "end": m.end(), "kana": ["*"], "hiragana": None,
+                "word_start": True, "dependent": False, "line_first": False,
+                "lang": "ko" if script == "ko" else latin, "letters": "*", "syllable": m.group(),
+            }
+        )  # fmt: skip
+    if not extra:
+        return line_atoms
+    units = sorted(line_atoms + extra, key=lambda a: a["offset"])
+    for k, a in enumerate(units):
+        a["line_first"] = k == 0
+    return units
 
 
 def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
