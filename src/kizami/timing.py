@@ -41,27 +41,9 @@ class Chunk:
 
 
 @dataclass(frozen=True)
-class Ruby:
-    """Furigana: the characters ``start`` to ``end`` (end not included) of the
-    line text are the reading of ``base`` (kanji as written in the lyrics).
-
-    The line text is the texts of the line's chunks joined.
-    """
-
-    base: str
-    start: int
-    end: int
-
-
-@dataclass(frozen=True)
 class Line:
     chunks: tuple[Chunk, ...]
     agent: str | None = None
-    ruby: tuple[Ruby, ...] = ()
-
-    @property
-    def text(self) -> str:
-        return "".join(chunk.text for chunk in self.chunks)
 
 
 @dataclass(frozen=True)
@@ -146,29 +128,12 @@ def _line_from_dict(data: Any, path: str) -> Line:
     if not isinstance(chunks, list) or not chunks:
         raise TimingFormatError(f"{path}.chunks must be a non-empty list")
 
-    parsed = tuple(_chunk_from_dict(chunk, f"{path}.chunks[{i}]") for i, chunk in enumerate(chunks))
-    size = sum(len(chunk.text) for chunk in parsed)
-    ruby = data.get("ruby", [])
-    if not isinstance(ruby, list):
-        raise TimingFormatError(f"{path}.ruby must be a list")
-    return Line(agent=agent, chunks=parsed, ruby=_ruby_from_list(ruby, size, f"{path}.ruby"))
-
-
-def _ruby_from_list(items: list, size: int, path: str) -> tuple[Ruby, ...]:
-    out: list[Ruby] = []
-    for i, item in enumerate(items):
-        where = f"{path}[{i}]"
-        if not isinstance(item, dict):
-            raise TimingFormatError(f"{where} must be an object")
-        base, start, end = item.get("base"), item.get("start"), item.get("end")
-        if not isinstance(base, str) or not base:
-            raise TimingFormatError(f"{where}.base must be a non-empty string")
-        if not _is_int(start) or not _is_int(end) or not 0 <= start < end <= size:
-            raise TimingFormatError(f"{where}: start and end must be positions in the line text, start before end")
-        if out and start < out[-1].end:
-            raise TimingFormatError(f"{where} must start after the one before it ends")
-        out.append(Ruby(base=base, start=start, end=end))
-    return tuple(out)
+    return Line(
+        agent=agent,
+        chunks=tuple(
+            _chunk_from_dict(chunk, f"{path}.chunks[{i}]") for i, chunk in enumerate(chunks)
+        ),
+    )
 
 
 def document_from_dict(data: Any) -> TimingDocument:
@@ -223,8 +188,6 @@ def _line_to_dict(line: Line) -> dict[str, Any]:
     if line.agent is not None:
         data["agent"] = line.agent
     data["chunks"] = [_chunk_to_dict(chunk) for chunk in line.chunks]
-    if line.ruby:
-        data["ruby"] = [{"base": r.base, "start": r.start, "end": r.end} for r in line.ruby]
     return data
 
 

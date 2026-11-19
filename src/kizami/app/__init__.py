@@ -6,7 +6,8 @@ lyrics, and press one button. The server then, on this computer:
 
 1. takes the vocal track out of the song with Demucs (skipped when the file
    is a vocal track already, or when the same song was separated before),
-2. runs ``kizami generate`` (level chu, kanji in hiragana),
+2. runs ``kizami generate`` (level chu; a kanji word is shown in hiragana
+   only when a chunk starts inside it),
 3. ends every chunk where the voice stops (:mod:`kizami.loudness`),
 4. writes a TTML file (:mod:`kizami.ttml`) that the page downloads.
 
@@ -41,7 +42,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
-from kizami.ttml import MAX_OFFSET_MS, TtmlError, TtmlOutput, load_for_export, readings_for, render_ttml
+from kizami.ttml import MAX_OFFSET_MS, TtmlError, TtmlOutput, load_for_export, render_ttml
 
 DEFAULT_PORT = 8766
 DEFAULT_WORK_DIR = "kizami-songs"
@@ -136,8 +137,7 @@ class Job:
             "seconds": round(end - self.started, 1),
             "folder": str(self.folder) if self.folder else None,
             "counts": self.counts,
-            "ttml_name": ttml_name(self.name, ruby=False),
-            "ruby_ttml_name": ttml_name(self.name, ruby=True),
+            "ttml_name": f"{self.name}.ttml",
             "tagger_saved": tagger_saved,
             "tagger_url": self.tagger_url,
             "offset_ms": self.offset_ms,
@@ -279,24 +279,21 @@ class App:
             raise AppError("no such job")
         return job
 
-    def ttml(
-        self, job: Job, offset_ms: int, use_tagger: bool, *, ruby: bool = False, chunk_spaces: bool = True
-    ) -> tuple[TtmlOutput, str]:
+    def ttml(self, job: Job, offset_ms: int, use_tagger: bool, *, chunk_spaces: bool = True) -> tuple[TtmlOutput, str]:
         """The TTML for a finished job, and the name of the file it was saved to."""
         if job.state != "done" or job.folder is None:
             raise AppError("the TTML file is not ready yet")
-        return self.write_ttml(job, offset_ms, use_tagger, ruby=ruby, chunk_spaces=chunk_spaces)
+        return self.write_ttml(job, offset_ms, use_tagger, chunk_spaces=chunk_spaces)
 
     def write_ttml(
-        self, job: Job, offset_ms: int, use_tagger: bool, *, ruby: bool = False, chunk_spaces: bool = True
+        self, job: Job, offset_ms: int, use_tagger: bool, *, chunk_spaces: bool = True
     ) -> tuple[TtmlOutput, str]:
         assert job.folder is not None
         source = job.folder / (TAGGER_PROJECT if use_tagger else TIMING)
         if not source.is_file():
             raise AppError(f"{source.name} is not in the song folder")
-        result = make_ttml(source, job.folder / VOCALS, offset_ms, job.title, job.artist,
-                           ruby=ruby, chunk_spaces=chunk_spaces)  # fmt: skip
-        out = job.folder / ttml_name(job.name, ruby=ruby)
+        result = make_ttml(source, job.folder / VOCALS, offset_ms, job.title, job.artist, chunk_spaces=chunk_spaces)
+        out = job.folder / f"{job.name}.ttml"
         out.write_text(result.text, encoding="utf-8")
         return result, out.name
 
@@ -319,10 +316,6 @@ class App:
             pass
 
 
-def ttml_name(name: str, *, ruby: bool) -> str:
-    return f"{name}-furigana.ttml" if ruby else f"{name}.ttml"
-
-
 def make_ttml(
     source: Path,
     vocals: Path | None,
@@ -330,16 +323,10 @@ def make_ttml(
     title: str = "",
     artist: str = "",
     *,
-    ruby: bool = False,
     chunk_spaces: bool = True,
 ) -> TtmlOutput:
-    """TTML from a timing file or tagger project, with ends from the vocal track if it is there.
-
-    With ``ruby``, a tagger project takes its furigana from the generated
-    timing (``auto_chu.json``) next to it.
-    """
+    """TTML from a timing file or tagger project, with ends from the vocal track if it is there."""
     doc = load_for_export(source)
-    readings = readings_for(source) if ruby and source.name == TAGGER_PROJECT else None
     if vocals is not None and vocals.is_file():
         from kizami.loudness import LoudnessError, add_end_times, loudness_from_wav
 
@@ -348,7 +335,7 @@ def make_ttml(
         except LoudnessError as exc:
             raise AppError(str(exc)) from exc
     return render_ttml(doc, offset_ms=offset_ms, title=title or None, artists=[artist] if artist else [],
-                       chunk_spaces=chunk_spaces, ruby=ruby, readings=readings)  # fmt: skip
+                       chunk_spaces=chunk_spaces)  # fmt: skip
 
 
 def run_pipeline(job: Job, upload: Upload, options: dict, app: App) -> None:
@@ -533,18 +520,14 @@ class _Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     raise _HttpError(HTTPStatus.BAD_REQUEST, "offset_ms must be a whole number") from None
                 use_tagger = query.get("source", ["generated"])[0] == "tagger"
-                ruby = query.get("ruby", ["0"])[0] == "1"
                 chunk_spaces = query.get("spaces", ["1"])[0] != "0"
                 try:
-                    result, name = self.app.ttml(job, offset, use_tagger, ruby=ruby, chunk_spaces=chunk_spaces)
+                    result, name = self.app.ttml(job, offset, use_tagger, chunk_spaces=chunk_spaces)
                 except (AppError, TtmlError) as exc:
                     raise _HttpError(HTTPStatus.CONFLICT, str(exc)) from None
                 disposition = f"attachment; filename=\"{_ascii_name(name)}\"; filename*=UTF-8''{quote(name)}"
                 self._send(HTTPStatus.OK, result.text.encode("utf-8"), "application/ttml+xml; charset=utf-8",
-                           extra={"Content-Disposition": disposition,
-                                  "X-Kizami-Lines": str(result.lines),
-                                  "X-Kizami-Furigana-Lines": str(result.ruby_lines),
-                                  "X-Kizami-Lines-Without-Furigana": str(result.lines_without_readings)})  # fmt: skip
+                           extra={"Content-Disposition": disposition})  # fmt: skip
                 return
             raise _HttpError(HTTPStatus.NOT_FOUND, "not found")
         except _HttpError as error:

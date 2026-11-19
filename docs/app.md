@@ -81,8 +81,8 @@ there.
    section tags such as `[Chorus]` are skipped. When a word is sung
    differently from how it is written, give the reading in braces:
    `明日{あした}`.
-3. **Output.** Choose how kanji are shown and whether a space follows each
-   chunk (see below). Leave the display offset at 0 at first.
+3. **Output.** Choose whether a space follows each chunk (see below). Leave
+   the display offset at 0 at first.
 4. Press **Make TTML**. The page shows each step. On an Apple silicon Mac, a
    song of about five minutes took 67 seconds to separate the voice and
    40 seconds to time. The same song file is separated only once, so a second
@@ -95,18 +95,17 @@ the voice, and after a pause or long note of one second or more. See
 
 ## Kanji and spaces
 
-- **Kanji: Show as hiragana** writes each kanji as its reading
-  (`願い` → `ねがい`).
-- **Kanji: Show with furigana** keeps the kanji and puts the reading above
-  them. When a chunk starts inside a kanji (the が of `願`), the reading lights
-  up in two parts. The file is named `<song>-furigana.ttml`. AMLL shows
-  furigana; other players may not. See [TTML output](ttml.md#furigana).
+- **Kanji** stay as written in the lyrics. Only a kanji word with a chunk
+  starting inside it is shown in hiragana, because the text can only change
+  between two characters: with a chunk start at the `が` of `願い`, the line
+  shows `ね` `がい`. A start between two kanji (`夜` and `空` of `夜空`) keeps
+  them. See [Generating timing](generate.md#options).
 - **Space after each chunk** (on by default) puts a space between the chunks
   of a line, so you can see where each one starts. Spaces written in the
   lyrics always stay.
 
-Like the display offset, both choices only change the downloaded file. Change
-them and press **Download TTML** again; no new run is needed.
+Like the display offset, the space choice only changes the downloaded file.
+Change it and press **Download TTML** again; no new run is needed.
 
 ## Check and fix by ear
 
@@ -146,7 +145,7 @@ file. It holds:
 | `vocals.wav` | The voice, taken out of the song. Kept so the song is separated only once. |
 | `lyrics.txt` | The lyrics you pasted. |
 | `auto_chu.json` | The timing that Kizami made ([format](timing-json-format.md)). |
-| `<song>.ttml`, `<song>-furigana.ttml` | The last TTML file you downloaded, with kanji as hiragana or with furigana. |
+| `<song>.ttml` | The last TTML file you downloaded. |
 | `tagger.json`, `tagger_labels.txt` | Your fixes, once you save them in the tagger. |
 | `source.json` | Which song file the vocal track came from. |
 | `_uploads/` (in the work folder) | The song file while it waits for a run. Removed after the run. |

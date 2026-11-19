@@ -105,13 +105,8 @@ button.primary { background: var(--accent); color: #1a1200; border-color: var(--
     <section class="card">
       <h2><span class="step">3</span>Output</h2>
       <div class="field">
-        <label for="kanji">Kanji</label>
-        <select id="kanji">
-          <option value="hiragana">Show as hiragana (願い → ねがい)</option>
-          <option value="ruby">Show with furigana (願 with ねが above it)</option>
-        </select>
-        <label class="check"><input type="checkbox" id="spaces" checked> Space after each chunk</label>
-        <p class="hint">With furigana, a chunk that starts inside a kanji (the が of 願) lights up in the furigana. These two choices, like the offset below, can be changed after the song is done: just download again.</p>
+        <label class="check" style="margin-top:0"><input type="checkbox" id="spaces" checked> Space after each chunk</label>
+        <p class="hint">Kanji stay as written. Only a kanji word with a chunk starting inside it (the が of 願い) is shown in hiragana. The space choice, like the offset below, can be changed after the song is done: just download again.</p>
       </div>
       <div class="field">
         <label for="offset">Display offset (ms)</label>
@@ -170,12 +165,11 @@ function loadSettings() {
   try {
     const o = JSON.parse(localStorage.getItem('kizami-app') || '{}');
     if (Number.isFinite(o.offset)) $('offset').value = o.offset;
-    if (o.kanji === 'ruby' || o.kanji === 'hiragana') $('kanji').value = o.kanji;
     if (typeof o.spaces === 'boolean') $('spaces').checked = o.spaces;
   } catch (e) { /* storage blocked */ }
 }
 function saveSettings() {
-  const o = { offset: offsetMs(), kanji: $('kanji').value, spaces: $('spaces').checked };
+  const o = { offset: offsetMs(), spaces: $('spaces').checked };
   try { localStorage.setItem('kizami-app', JSON.stringify(o)); } catch (e) { /* storage blocked */ }
 }
 function offsetMs() {
@@ -280,21 +274,14 @@ $('download').addEventListener('click', async () => {
   if (!job) return;
   saveSettings();
   const source = !$('useTaggerWrap').hidden && $('useTagger').checked ? 'tagger' : 'generated';
-  const ruby = $('kanji').value === 'ruby';
   const spaces = $('spaces').checked ? 1 : 0;
   try {
-    const r = await api(`/api/jobs/${job.id}/ttml?offset_ms=${offsetMs()}&source=${source}&ruby=${ruby ? 1 : 0}&spaces=${spaces}`);
+    const r = await api(`/api/jobs/${job.id}/ttml?offset_ms=${offsetMs()}&source=${source}&spaces=${spaces}`);
     const blob = await r.blob();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = ruby ? job.ruby_ttml_name : job.ttml_name;
+    a.href = URL.createObjectURL(blob); a.download = job.ttml_name;
     document.body.appendChild(a); a.click(); a.remove();            // Firefox needs the link in the page
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    if (ruby) {
-      const missing = Number(r.headers.get('X-Kizami-Lines-Without-Furigana') || 0);
-      const withRuby = Number(r.headers.get('X-Kizami-Furigana-Lines') || 0);
-      if (missing) alertResult(`${missing === 1 ? '1 line has' : `${missing} lines have`} no furigana: their text is not the same as in the timing Kizami made (for example a chunk without a time in the tagger).`);
-      else if (!withRuby) alertResult('There were no kanji to show with furigana.');
-    }
   } catch (err) { alertResult(`Download failed: ${err.message}`); }
 });
 

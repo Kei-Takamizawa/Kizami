@@ -173,14 +173,59 @@ def test_a_medium_chunk_can_start_inside_a_kanji():
     assert chunks_for(lines, chosen, out)[0][1][3] == [("が", 1.3, False), ("い", 1.6, False), ("を", 1.9, False)]
 
 
-def test_hiragana_records_where_each_kanji_reading_is_for_furigana():
-    from kizami.generate.text import to_hiragana
+def _auto(display, morae_of, chosen_at):
+    """Units of one line placed by hand, made hiragana, then kanji written again unless split.
 
-    lines, atoms = _placed_line("願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]])
+    ``chosen_at`` lists the hiragana-text offsets of the units that start chunks.
+    """
+    from kizami.generate.text import kanji_unless_split, to_hiragana
 
-    to_hiragana(lines, atoms)
+    lines, atoms = _placed_line(display, morae_of)
+    out = to_hiragana(lines, atoms)
+    chosen = [u for u in out if u["offset"] in chosen_at]
+    shown, units, chosen2, left = kanji_unless_split(lines, out, chosen)
+    return shown, units, chosen2, left, lines
 
-    assert lines[0]["ruby"] == [(0, 2, "願")]  # ねが, split into two units, is one reading
+
+def test_kanji_stay_as_written_when_no_chunk_starts_inside_them():
+    shown, units, chosen, left, lines = _auto(
+        "願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]], {0, 3}
+    )
+
+    assert (shown[0]["display"], left) == ("願いを", 0)
+    assert [text for text, *_ in chunks_for(shown, chosen, units)[0]] == ["願い", "を"]
+    assert lines[0]["display"] == "ねがいを"  # the input is not changed
+
+
+def test_a_kanji_word_with_a_chunk_start_inside_is_written_in_hiragana():
+    shown, units, chosen, left, _ = _auto(
+        "願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]], {0, 1}
+    )
+
+    assert (shown[0]["display"], left) == ("ねがいを", 1)
+    assert [text for text, *_ in chunks_for(shown, chosen, units)[0]] == ["ね", "がいを"]
+
+
+def test_kanji_next_to_each_other_change_together_but_a_start_between_them_keeps_them():
+    morae = [[("よ", 1.0, 2.0)], [("ぞ", 1.3, 2.0), ("ら", 1.6, 3.0)], [("を", 1.9, 1.0)]]
+
+    inside, units, chosen, left, _ = _auto("夜空を", morae, {0, 2})  # starts at よ and at the ら of 空
+    between, units2, chosen2, left2, _ = _auto("夜空を", morae, {0, 1})  # starts at 夜 and at 空
+
+    assert (inside[0]["display"], left) == ("よぞらを", 1)
+    assert [text for text, *_ in chunks_for(inside, chosen, units)[0]] == ["よぞ", "らを"]
+    assert (between[0]["display"], left2) == ("夜空を", 0)
+    assert [text for text, *_ in chunks_for(between, chosen2, units2)[0]] == ["夜", "空を"]
+
+
+def test_kanji_after_a_hiragana_word_keep_their_offsets():
+    morae = [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)],
+             [("よ", 2.2, 2.0)], [("ぞ", 2.5, 2.0), ("ら", 2.8, 1.0)]]  # fmt: skip
+    shown, units, chosen, left, _ = _auto("願いを夜空", morae, {0, 1, 4})  # 願 split; 夜空 not
+
+    assert (shown[0]["display"], left) == ("ねがいを夜空", 1)
+    assert [text for text, *_ in chunks_for(shown, chosen, units)[0]] == ["ね", "がいを", "夜空"]
+    assert [c["offset"] for c in chosen] == [0, 1, 4]
 
 
 @pytest.mark.parametrize(
@@ -191,49 +236,12 @@ def test_hiragana_records_where_each_kanji_reading_is_for_furigana():
         ("お願い", "おねがい", (1, 3, "願")),
         ("今日", "きょう", (0, 3, "今日")),
         ("ゆめ", "ゆめ", None),  # no kanji
-        ("ッ", "っ", None),
     ],
 )
-def test_ruby_part_leaves_the_shared_kana_outside(written, reading, expected):
-    from kizami.generate.text import ruby_part
+def test_kanji_part_leaves_the_shared_kana_outside(written, reading, expected):
+    from kizami.generate.text import kanji_part
 
-    assert ruby_part(written, reading) == expected
-
-
-def test_furigana_positions_follow_the_chunk_texts_joined():
-    from kizami.generate.place import ruby_for
-
-    lines = [{"display": " 「ねがい」 ゆめ ", "ruby": [(2, 4, "願"), (7, 9, "夢")]}]  # the first space is dropped
-    chosen = [
-        {"line": 0, "offset": 2, "time": 1.0, "snapped": True},
-        {"line": 0, "offset": 3, "time": 1.3, "snapped": True},
-        {"line": 0, "offset": 7, "time": 2.0, "snapped": True},
-    ]
-
-    texts = [text for text, *_ in chunks_for(lines, chosen)[0]]
-    ruby = ruby_for(lines, chosen)[0]
-
-    assert texts == ["「ね", "がい」 ", "ゆめ"]
-    joined = "".join(texts)
-    assert [(joined[a:b], base) for a, b, base in ruby] == [("ねが", "願"), ("ゆめ", "夢")]
-
-
-def test_furigana_is_written_to_the_timing_file(tmp_path):
-    from kizami.generate import _write_level
-    from kizami.timing import Ruby, load_document
-
-    lines = [{"display": "ねがいを", "ruby": [(0, 2, "願")]}]
-    chosen = [
-        {"line": 0, "offset": 0, "time": 1.0, "snapped": True},
-        {"line": 0, "offset": 1, "time": 1.3, "snapped": True},
-    ]
-
-    result = _write_level(tmp_path, "chu", lines, chosen, {}, kanji="hiragana")
-
-    doc = load_document(result.timing)
-    assert doc.meta["ruby"] is True
-    assert doc.lines[0].ruby == (Ruby("願", 0, 2),)
-    assert [c.text for c in doc.lines[0].chunks] == ["ね", "がいを"]
+    assert kanji_part(written, reading) == expected
 
 
 def test_a_space_between_words_stays_with_the_chunk_before_it():
@@ -562,9 +570,9 @@ def test_cli_generate_needs_a_folder_and_a_model_folder(tmp_path, monkeypatch, c
     assert "vocal track not found" in capsys.readouterr().err
 
 
-def test_cli_generate_writes_medium_with_hiragana_by_default():
+def test_cli_generate_writes_medium_with_kanji_auto_by_default():
     from kizami.cli import _build_parser
 
     args = _build_parser().parse_args(["generate", "song"])
 
-    assert (args.level, args.kanji, args.anchor) == ("chu", "hiragana", "prev-end")
+    assert (args.level, args.kanji, args.anchor) == ("chu", "auto", "prev-end")

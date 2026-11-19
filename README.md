@@ -14,10 +14,9 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
   grammar boundaries.
 - **Chunks start on strong attacks.** A new chunk starts at each word and
   at each strong attack inside a word, so the text moves with the groove.
-- **Kanji in hiragana or with furigana.** Kanji are written as their reading
-  (`願い` becomes `ねがい`), so a chunk can start at a strong attack inside a
-  kanji, such as the `が` of `願`. Or keep the kanji and show the reading
-  above them as furigana; the reading then lights up in parts.
+- **Chunks can start inside a kanji.** A chunk can start at a strong attack
+  inside a kanji, such as the `が` of `願`. Kanji stay as written; only a
+  word that is split this way is shown in hiragana (`ね` `がい`).
 - **Everything runs on your computer.** You give Kizami a song file and a
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
@@ -42,8 +41,8 @@ in the Dock) opens the app.
 You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
 once). On an Apple silicon Mac, a song of about five minutes took 67 seconds
 to separate the voice (once per song) and 40 seconds to time. You can choose
-hiragana or furigana, a space after each chunk, and a display offset for
-players or earphones that play the sound late. See
+a space after each chunk and a display offset for players or earphones that
+play the sound late. See
 [the app guide](docs/app.md).
 
 ## Planned
@@ -90,8 +89,10 @@ Measure how close a timing file is to a hand-made reference.
 track, separated from the mix beforehand) and `lyrics.txt`, and writes the
 timing next to them as `auto_chu.json` and `auto_labels_chu.txt`. A chunk
 starts at each word (with its particles), at the strongest attacks inside
-words, and after a pause or long note of 1 second or more. Kanji are written in hiragana; add `--kanji keep` to keep them as
-written.
+words, and after a pause or long note of 1 second or more. Kanji stay as
+written; a kanji word with a chunk starting inside it is written in hiragana
+(`--kanji hiragana` writes all kanji in hiragana, `--kanji keep` never splits
+a kanji).
 
 ```
 pip install -e ".[generate]"

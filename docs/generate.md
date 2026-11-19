@@ -1,9 +1,9 @@
 # Generating timing
 
 `kizami generate` turns a vocal track and its lyrics into chunk timing. A
-chunk starts at each word and at each strong vocal attack inside a word, and
-kanji are written in hiragana so that a chunk can also start inside one (the
-`が` of `願`). Everything runs on your computer; nothing is downloaded while
+chunk starts at each word and at each strong vocal attack inside a word, also
+inside a kanji (the `が` of `願`). Kanji stay as written; only a kanji word
+with a chunk starting inside it is written in hiragana. Everything runs on your computer; nothing is downloaded while
 it runs.
 
 ```
@@ -49,7 +49,7 @@ The `ffmpeg` program must be installed to read the audio for the models.
 | Option | Default | Meaning |
 |---|---|---|
 | `--level` | `chu` | `chu` (the timing to use). `dai`, `sho` or `all` write the other two levels too, for comparison. |
-| `--kanji` | `hiragana` | `hiragana` writes kanji as their reading, one unit per mora, and records which reading belongs to which kanji (`lines[].ruby`), so that `kizami ttml --ruby` can show furigana. `keep` writes them as in `lyrics.txt`; a kanji then never splits. |
+| `--kanji` | `auto` | `auto` keeps kanji as written in `lyrics.txt`. Only a run of kanji with a chunk start inside the reading of one of them is written in hiragana: with a start at the `が` of `願い`, the chunks are `ね` and `がい`; with a start inside `空`, `夜空` becomes `よぞら` (not `夜そら`). A start between `夜` and `空` keeps `夜空`. `hiragana` writes every kanji as its reading. `keep` writes them as in `lyrics.txt`; a chunk then never starts inside a kanji. `auto` and `hiragana` give the same chunk starts. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
 | `--cache` | none | Folder for the model outputs. A rerun on the same audio then takes a few seconds. |
@@ -61,10 +61,12 @@ A timing file (`auto_chu.json`, see the
 [timing JSON format](timing-json-format.md)) and an Audacity label file
 (`auto_labels_chu.txt`). Open the timing file in the tagger to review it with
 its lyric lines: `kizami tagger song-folder --labels auto_chu.json`. (The
-label file has no line breaks, and with kanji in hiragana its text no longer
-matches `lyrics.txt`, so the tagger would have to guess the lines.) A chunk
+label file has no line breaks, and where kanji are written in hiragana its
+text no longer matches `lyrics.txt`, so the tagger would have to guess the
+lines.) A chunk
 with no clear attack of its own is `uncertain` in the JSON and starts with
-`?` in the label file. The command prints counts only, never lyric text.
+`?` in the label file. The command prints counts only, never lyric text; with
+`--kanji auto` it also says how many kanji words were written in hiragana.
 
 | Level | One chunk is |
 |---|---|
@@ -72,8 +74,8 @@ with no clear attack of its own is `uncertain` in the JSON and starts with
 | `dai` | a word with its particles, such as `夜空を` (with `--level dai` or `all`) |
 | `sho` | every unit with a sound of its own (with `--level sho` or `all`); small kana, `っ`, `ー` and a drawn-out `う` join the kana before |
 
-The same character has the same start time at every level, and with
-`--kanji hiragana` or `keep`. `kizami eval` compares files by their text, so
+The same character has the same start time at every level and with every
+`--kanji` mode. `kizami eval` compares files by their text, so
 compare against a reference written with kanji using `--kanji keep`.
 
 Each chunk with two or more morae also lists when every mora starts
@@ -105,10 +107,12 @@ inside a chunk.
    the rule of step 4.
 6. **Level chu.** A unit starts a chunk if it starts a word (particles stay
    with the word before) or if its attack is among the strongest 45% of the
-   attacks inside words. With `--kanji hiragana` a unit with kanji is then
-   split into its morae, and a later mora also starts a chunk when its attack
-   is at least as strong as that 45% line. The line is set before the split,
-   so every other chunk start is the same as with `--kanji keep`.
+   attacks inside words. With `--kanji auto` or `hiragana` a unit with kanji
+   is then split into its morae, and a later mora also starts a chunk when
+   its attack is at least as strong as that 45% line. The line is set before
+   the split, so every other chunk start is the same as with `--kanji keep`.
+   With `auto`, kanji with no chunk start inside them are then written back
+   as kanji; the chunk starts do not change.
    A unit that starts 1 second or more after the unit before it in the same
    line (after a long note or a rest) also starts a chunk, with or without a
    strong attack (`gap` in the parameters; 0 turns it off).
@@ -130,7 +134,7 @@ in the tagger. Recall is the share of reference chunk starts matched within
 Known weak spots: characters without an attack of their own (about half are
 within 50 ms), and fast runs where both models are a syllable late.
 
-**Chunks inside a kanji** (`--kanji hiragana`, measured 2026-11-19). All
+**Chunks inside a kanji** (`--kanji auto` or `hiragana`, measured 2026-11-19). All
 chunk starts outside kanji are the same as with `--kanji keep`, so the table
 above still holds for them. The split adds 27, 27, 39 and 12 chunk starts
 inside kanji to songs 1 to 4 (282 to 309 chunks for song 1). There is no

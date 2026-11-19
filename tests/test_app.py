@@ -1,7 +1,6 @@
 import http.client
 import json
 import os
-import sys
 import threading
 import time
 import wave
@@ -17,12 +16,11 @@ from kizami.app import (
     App,
     AppError,
     Job,
-    Upload,
     create_server,
     run_pipeline,
     safe_name,
 )
-from kizami.timing import Chunk, Line, Mora, Ruby, TimingDocument, save_document
+from kizami.timing import Chunk, Line, TimingDocument, save_document
 
 NS = "{http://www.w3.org/ns/ttml}"
 
@@ -186,53 +184,16 @@ def test_the_download_can_use_the_fixes_saved_in_the_tagger(running):
     ]
 
 
-def furigana_timing(folder):
-    """願いを, with a chunk start at the が inside 願, as kizami generate writes it."""
-    morae = (Mora("が", 1500), Mora("い", 1800))
-    line = Line(chunks=(Chunk("ね", 500), Chunk("がい", 1500, morae=morae)), ruby=(Ruby("願", 0, 2),))
-    save_document(TimingDocument(lines=(line,), meta={"ruby": True}), folder / "auto_chu.json")
-
-
-def test_the_download_can_show_kanji_with_furigana_and_drop_the_chunk_spaces(running):
+def test_the_download_can_drop_the_chunk_spaces(running):
     app, port = running
     status, data, _ = start(port, app.token, upload=upload(port, app.token))
     info = wait_done(port, app.token, json.loads(data)["id"])
-    folder = Path(info["folder"])
-    furigana_timing(folder)
 
-    status, body, response = request(port, "GET", f"/api/jobs/{info['id']}/ttml?ruby=1", token=app.token)
-    plain = request(port, "GET", f"/api/jobs/{info['id']}/ttml?spaces=0", token=app.token)[1]
+    spaced = request(port, "GET", f"/api/jobs/{info['id']}/ttml", token=app.token)[1].decode("utf-8")
+    plain = request(port, "GET", f"/api/jobs/{info['id']}/ttml?spaces=0", token=app.token)[1].decode("utf-8")
 
-    assert status == 200
-    assert info["ruby_ttml_name"] == "ドライ フラワー-furigana.ttml"
-    assert (folder / info["ruby_ttml_name"]).is_file()
-    assert "-furigana.ttml" in response.getheader("Content-Disposition")
-    assert response.getheader("X-Kizami-Furigana-Lines") == "1"
-    text = body.decode("utf-8")
-    assert '<span tts:ruby="base">願</span>' in text
-    assert '<span tts:ruby="text" begin="00:00:01.500" end="00:00:01.800">が</span>' in text
-    assert "</span><span" in plain.decode("utf-8") and "</span> <span" not in plain.decode("utf-8")
-
-
-def test_tagger_fixes_keep_the_furigana_of_the_lines_with_the_same_text(running):
-    app, port = running
-    status, data, _ = start(port, app.token, upload=upload(port, app.token))
-    info = wait_done(port, app.token, json.loads(data)["id"])
-    folder = Path(info["folder"])
-    furigana_timing(folder)
-    project = {"format": "kizami-tagger", "version": 1, "lines": [
-        {"units": [{"text": "ね", "start_ms": 600}, {"text": "がい", "start_ms": 1600, "end_ms": 2100}]},
-        {"units": [{"text": "ほか", "start_ms": 3000, "end_ms": 3400}]},
-    ]}  # fmt: skip
-    (folder / "tagger.json").write_text(json.dumps(project), encoding="utf-8")
-
-    status, body, response = request(port, "GET", f"/api/jobs/{info['id']}/ttml?source=tagger&ruby=1", token=app.token)
-
-    assert status == 200
-    text = body.decode("utf-8")
-    assert '<span tts:ruby="text" begin="00:00:00.600" end="00:00:01.210">ね</span>' in text  # voice stops at 1.2 s
-    assert '<span tts:ruby="text" begin="00:00:01.600" end="00:00:01.900">が</span>' in text  # い moved +100 ms too
-    assert (response.getheader("X-Kizami-Furigana-Lines"), response.getheader("X-Kizami-Lines-Without-Furigana")) == ("1", "1")
+    assert "</span> <span" in spaced and "</span><span" not in spaced
+    assert "</span><span" in plain and "</span> <span" not in plain
 
 
 def test_uploads_wait_in_the_work_folder_and_leftovers_are_removed(tmp_path):
