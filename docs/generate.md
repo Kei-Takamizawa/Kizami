@@ -196,26 +196,31 @@ Children's Song Dataset, 100 solo recordings of 50 children's songs,
 reference starts matched within 50 ms. The lags were tuned on these same
 songs (both halves of each set agreed), so the tuned numbers are optimistic.
 
-| | Starts | Before tuning (lag −0.02) | Now (tuned lag, star token) |
+| | Starts | Before tuning (lag −0.02) | Now (tuned lag, star token, silence penalty) |
 |---|---|---|---|
-| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 55.7% (`lag_en` −0.03) |
-| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 60.5% (`lag_es` 0.00) |
-| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | 62.9% (`lag_ko` +0.01) |
+| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 57.1% (`lag_en` −0.03) |
+| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 61.0% (`lag_es` 0.00) |
+| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | 63.0% (`lag_ko` +0.01) |
 
 This is far below the 90% target. What the misses are:
 
-- **English:** 13.6% of the words are placed more than 1 second away (whole
-  passages aligned to the wrong place); many more are 50 to 100 ms off.
+- **English:** 9.5% of the words are placed more than 1 second away (whole
+  passages aligned to the wrong place, often onto singing that is not in the
+  lyrics); many more are 50 to 100 ms off.
 - **Spanish:** 782 words joined to the word before by sinalefa never start a
-  chunk at this level; without them, recall is 71.0%.
+  chunk at this level; without them, recall is 71.6%.
 - **Korean:** almost all syllables are close (99% within 1 s, 82% within
   100 ms before tuning) but not within 50 ms. The dataset marks note starts,
   which can fall later than where the syllable's first consonant starts.
 
-The star token (`mms_star`, on by default) lets the letter model skip singing
-between lines that is not in the lyrics: +36 English words, +11 Spanish, no
-change for Korean, and +1 start on the Japanese songs. The owner's own songs
-in each language are not measured yet.
+Two changes to the letter model's alignment helped. The star token
+(`mms_star`, on by default) lets it skip singing between lines that is not in
+the lyrics: +36 English words, +11 Spanish, no change for Korean, and +1
+start on the Japanese songs. The silence penalty (`mms_silence` 5) keeps the
+lyrics out of stretches where the vocal track is silent, which fixed passages
+placed into silent intros: +81 English words (words more than 1 s away fell
+from 772 to 540), +28 Spanish, no change for Korean, and +2 starts on the
+Japanese songs. The owner's own songs in each language are not measured yet.
 
 Turn a JamendoLyrics annotation into a reference with
 

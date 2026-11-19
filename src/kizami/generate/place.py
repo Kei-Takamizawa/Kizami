@@ -55,7 +55,7 @@ DEFAULTS = {
     "mms_tm": 0.02,  # ... the MMS confidence is at least this
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
     "mms_star": 1.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics
-    "mms_silence": 0.0,  # letters this much less likely (log) where the vocals are silent; 0 = off (trial)
+    "mms_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
     "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk
