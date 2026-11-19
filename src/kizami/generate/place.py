@@ -28,9 +28,9 @@ from kizami.generate.audio import SIBILANT, hiss_start
 DEFAULTS = {
     # aligned time to attack
     "lag": -0.02,  # added to the aligned time before searching (Japanese)
-    "lag_en": -0.02,  # ... for English units (MMS time)
-    "lag_es": -0.02,  # ... for Spanish units (MMS time)
-    "lag_ko": -0.02,  # ... for Korean units (MMS time)
+    "lag_en": -0.03,  # ... for English units (MMS time; JamendoLyrics, 2026-11-19)
+    "lag_es": 0.0,  # ... for Spanish units (MMS time; JamendoLyrics, 2026-11-19)
+    "lag_ko": -0.02,  # ... for Korean units (MMS time; not tuned yet)
     "before": 0.07,  # search window before the aligned time (s)
     "after": 0.05,  # ... and after it
     "tau": 0.05,  # closeness weight: strength * exp(-distance / tau)

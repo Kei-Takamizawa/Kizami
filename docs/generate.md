@@ -186,11 +186,25 @@ the time.
 to songs 1 to 4; 4 of the 16 have no clear attack and are marked uncertain.
 Of the 9 that start on a character with a reference time, 6 are within 50 ms.
 
-**Korean, English and Spanish** are not measured yet (2026-11-19). The
-plan: English and Spanish word starts on JamendoLyrics MultiLang (20 songs
-each), Korean syllable starts on the Children's Song Dataset, then one chorus
-of the owner's own songs per language as the real check. Turn a JamendoLyrics
-annotation into a reference with
+**English and Spanish** (measured 2026-11-19 on JamendoLyrics MultiLang, 20
+songs each, vocals separated with Demucs, `--level dai --anchor attack`).
+Recall is the share of the dataset's word starts matched within 50 ms. The
+lags were tuned on these songs (both halves of each set agreed), so the
+numbers after tuning are optimistic.
+
+| | Words | Recall, lag −0.02 | Recall, tuned lag |
+|---|---|---|---|
+| English | 5,693 | 53.6% (95% interval 52.4 to 54.9%) | 55.0% (`lag_en` −0.03) |
+| Spanish | 5,269 | 55.4% (54.0 to 56.7%) | 60.3% (`lag_es` 0.00) |
+
+This is far below the 90% target. The biggest causes: in English, 14.6% of
+the words were placed more than 1 second away (whole passages aligned to the
+wrong place), and many more were 50 to 100 ms off. In Spanish, 782 words
+joined to the word before by sinalefa never start a chunk at this level;
+without them, recall is 65.0% before tuning. Korean, and the owner's own
+songs in every language, are not measured yet.
+
+Turn a JamendoLyrics annotation into a reference with
 
 ```
 kizami import-ref --format jamendo annotations/words/SONG.csv \
@@ -198,7 +212,13 @@ kizami import-ref --format jamendo annotations/words/SONG.csv \
 ```
 
 Its times mark the attack, so generate with `--anchor attack --level dai`
-before `kizami eval`. To try parameter values on songs whose model outputs
+before `kizami eval`. A Korean song of the Children's Song Dataset becomes a
+reference with one chunk per Hangul block (compare with `--level sho`):
+
+```
+kizami import-ref --format csd csv/kr001a.csv --lyrics lyric/kr001a.txt -o ref.json
+```
+ To try parameter values on songs whose model outputs
 are cached, without running the models again:
 
 ```
