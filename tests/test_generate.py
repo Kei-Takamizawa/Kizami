@@ -173,6 +173,13 @@ def test_a_medium_chunk_can_start_inside_a_kanji():
     assert chunks_for(lines, chosen, out)[0][1][3] == [("が", 1.3, False), ("い", 1.6, False), ("を", 1.9, False)]
 
 
+def test_a_space_between_words_stays_with_the_chunk_before_it():
+    lines = [{"display": "「夜空を 駆ける」 "}]
+    chosen = [{"line": 0, "offset": 1, "time": 1.0, "snapped": True}, {"line": 0, "offset": 5, "time": 2.0, "snapped": True}]
+
+    assert [text for text, *_ in chunks_for(lines, chosen)[0]] == ["「夜空を ", "駆ける」"]
+
+
 def test_a_long_gap_starts_a_medium_chunk_inside_its_line():
     units = [
         {"line": 0, "time": 1.0, "snapped": True, "strength": 2.0, "word_start": True, "dependent": False, "line_first": True},
