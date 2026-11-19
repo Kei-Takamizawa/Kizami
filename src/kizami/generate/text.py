@@ -308,18 +308,27 @@ def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
     and the old text is kept as ``original``. Katakana and Latin letters stay
     as written. Each returned unit has ``written``: where it starts in the
     old text, or None for a later mora of a kanji reading.
+
+    Each line also gets ``kanji``: ``[(start, end, written), ...]``, the parts
+    of the new text that are the reading of kanji ``written``. Kana that the
+    written text and the reading share at either end stay outside: 行っ read
+    いっ gives ``written`` 行 over い. :func:`kanji_unless_split` uses them.
     """
     out: list[dict] = []
     by_line: dict[int, list[dict]] = {}
     for a in atoms:
         by_line.setdefault(a["line"], []).append(a)
     for li, line in enumerate(lines):
-        old, shown, src = line["display"], "", 0
+        old, shown, src, kanji = line["display"], "", 0, []
         for a in by_line.get(li, []):
             if a["offset"] >= src:
                 shown += old[src : a["offset"]]
             src = max(src, a["end"])
             text = a["hiragana"] if a.get("hiragana") is not None else old[a["offset"] : a["end"]]
+            if a.get("hiragana") is not None:
+                written = old[a["offset"] : a["end"]]
+                part = kanji_part(written, text) or (0, len(text), written)
+                kanji.append((len(shown) + part[0], len(shown) + part[1], part[2]))
             morae = a.get("morae") or []
             strengths = a.get("mora_strengths") or []
             split = (
@@ -345,4 +354,85 @@ def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
                 shown += kana
         line["original"] = old
         line["display"] = shown + old[src:]
+        line["kanji"] = kanji
     return out
+
+
+def kanji_part(written: str, reading: str) -> tuple[int, int, str] | None:
+    """Where the kanji of ``written`` sit in ``reading``: ``(start, end, base)``, or None.
+
+    Kana at either end that ``written`` and ``reading`` share are left out
+    (``行っ`` and ``いっ`` give ``(0, 1, "行")``). None when no kanji is left.
+    """
+    w = kata_to_hira(written)
+    s = 0
+    while s < len(w) - 1 and s < len(reading) - 1 and is_kana(w[s]) and w[s] == reading[s]:
+        s += 1
+    e = 0
+    while e < len(w) - s - 1 and e < len(reading) - s - 1 and is_kana(w[-1 - e]) and w[-1 - e] == reading[-1 - e]:
+        e += 1
+    base = written[s : len(written) - e]
+    if not has_kanji(base) or not reading[s : len(reading) - e]:
+        return None
+    return s, len(reading) - e, base
+
+
+
+def kanji_unless_split(lines: list[dict], atoms: list[dict], chosen: list[dict]) -> tuple[list[dict], list[dict], list[dict], int]:
+    """Write kanji as in the lyrics again, except where a chunk starts inside their reading.
+
+    Call it with the lines and units from :func:`to_hiragana` and the units
+    chosen to start chunks. Kanji next to each other (one word, such as 夜空)
+    are one group: when a chunk starts inside the reading of any of them (the
+    ら of 空), the whole group stays in hiragana (よぞら). A chunk that starts
+    between two kanji (夜|空) does not need hiragana. Returns copies of the
+    lines, units and chosen units with the new text and offsets, and the
+    number of groups left in hiragana. The inputs are not changed.
+    """
+    starts: dict[int, set[int]] = {}
+    for a in chosen:
+        starts.setdefault(a["line"], set()).add(a["offset"])
+    new_lines, moves, left = [], [], 0
+    for li, line in enumerate(lines):
+        groups: list[list[tuple[int, int, str]]] = []
+        for r in sorted(line.get("kanji", ())):
+            if groups and groups[-1][-1][1] == r[0]:
+                groups[-1].append(r)
+            else:
+                groups.append([r])
+        here = starts.get(li, set())
+        keep = []
+        for g in groups:
+            if any(a < s < b for a, b, _ in g for s in here):
+                left += 1
+            else:
+                keep.extend(g)
+        text, out, at, move = line["display"], "", 0, []  # move: (old start, old end, new start, new end)
+        for a, b, written in keep:
+            out += text[at:a]
+            move.append((a, b, len(out), len(out) + len(written)))
+            out += written
+            at = b
+        out += text[at:]
+        new_lines.append(dict(line, display=out))
+        moves.append(move)
+
+    def new_pos(li: int, pos: int, end: bool) -> int:
+        shift = 0
+        for a, b, na, nb in moves[li]:
+            if pos >= b:
+                shift = nb - b
+            elif pos > a:
+                return nb if end else na  # inside a kanji written again
+            else:
+                break
+        return pos + shift
+
+    copies = {}
+    new_atoms = []
+    for u in atoms:
+        c = dict(u, offset=new_pos(u["line"], u["offset"], False), end=new_pos(u["line"], u["end"], True))
+        copies[id(u)] = c
+        new_atoms.append(c)
+    new_chosen = [copies.get(id(a)) or dict(a, offset=new_pos(a["line"], a["offset"], False)) for a in chosen]
+    return new_lines, new_atoms, new_chosen, left

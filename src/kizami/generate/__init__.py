@@ -9,8 +9,10 @@ Audacity label file for level chu (medium):
 * ``auto_chu.json`` / ``auto_labels_chu.txt``: a chunk starts at each word
   (with its particles) and at the strongest attacks inside words.
 
-Kanji are shown as their reading in hiragana by default (``kanji="hiragana"``),
-so a chunk can also start inside a kanji, such as at the が of 願.
+A chunk can also start inside a kanji, such as at the が of 願. By default
+(``kanji="auto"``) such a kanji word is written in hiragana (ねがい) and every
+other kanji as in the lyrics. ``"hiragana"`` writes every kanji in hiragana;
+``"keep"`` writes every kanji as in the lyrics, and a kanji never splits.
 Two more levels can be asked for with ``levels``, for comparison:
 ``dai`` (a word with its particles per chunk) and ``sho`` (every kana or
 character with a sound of its own).
@@ -40,7 +42,7 @@ from typing import Callable, Iterable
 
 LEVELS = ("dai", "chu", "sho")
 DEFAULT_LEVELS = ("chu",)
-KANJI_MODES = ("hiragana", "keep")
+KANJI_MODES = ("auto", "hiragana", "keep")
 KANA_MODEL = "w2v2-hiragana"
 MMS_MODEL = Path("mms_fa") / "model.pt"
 REQUIRED_MODULES = {
@@ -64,6 +66,7 @@ class LevelResult:
     labels: Path
     chunks: int
     uncertain: int
+    kanji_in_hiragana: int = 0  # kanji words written in hiragana because a chunk starts inside one
 
 
 @dataclass
@@ -99,7 +102,7 @@ def generate(
     lyrics: str | Path | None = None,
     out_dir: str | Path | None = None,
     levels: Iterable[str] = DEFAULT_LEVELS,
-    kanji: str = "hiragana",
+    kanji: str = "auto",
     mms: str = "auto",
     cache: str | Path | None = None,
     params: dict | None = None,
@@ -108,9 +111,10 @@ def generate(
     """Write timing and label files for one song. See the module docstring.
 
     ``folder`` holds ``vocals.wav`` and ``lyrics.txt`` unless ``vocals`` and
-    ``lyrics`` name other files. ``kanji`` is ``"hiragana"`` (show kanji as
-    their reading; a chunk can start at a strong attack inside one) or
-    ``"keep"`` (show kanji as written; a kanji never splits). ``mms`` is ``"auto"`` (use the second model if
+    ``lyrics`` name other files. ``kanji`` is ``"auto"`` (a chunk can start
+    at a strong attack inside a kanji; only such kanji words are shown in
+    hiragana), ``"hiragana"`` (every kanji shown as its reading) or ``"keep"``
+    (kanji shown as written; a kanji never splits). ``mms`` is ``"auto"`` (use the second model if
     its file is there), ``"on"`` or ``"off"``. ``cache`` is a folder where the
     model outputs are kept, so a second run on the same audio is fast.
     ``params`` overrides values of ``kizami.generate.place.DEFAULTS``.
@@ -227,12 +231,17 @@ def generate(
         used_second_aligner=use_mms,
         start_rules=dict(sorted(rules.items())),
     )
-    if kanji == "hiragana":
+    if kanji in ("auto", "hiragana"):
         atoms = text.to_hiragana(lines, atoms)  # after the threshold, so the kanji's morae do not move it
     out.mkdir(parents=True, exist_ok=True)
     for level in levels:
         chosen = place.select(atoms, level, p["m_thr"], p["gap"] if p["gap"] > 0 else None)
-        result.levels.append(_write_level(out, level, lines, chosen, p, atoms, kanji))
+        shown, units, left = lines, atoms, 0
+        if kanji == "auto":
+            shown, units, chosen, left = text.kanji_unless_split(lines, atoms, chosen)
+        level_result = _write_level(out, level, shown, chosen, p, units, kanji)
+        level_result.kanji_in_hiragana = left
+        result.levels.append(level_result)
     return result
 
 

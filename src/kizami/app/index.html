@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kizami</title>
+<style>
+:root {
+  --bg: #121418; --panel: #1b1e24; --panel2: #242830; --line: #333945;
+  --text: #e8eaee; --dim: #8b93a1; --accent: #ffb454; --accent2: #5cc8ff;
+  --warn: #ff6b81; --ok: #7bd88f;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--bg); }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 -apple-system, "Hiragino Sans", "Noto Sans JP", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+}
+main { max-width: 680px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: .04em; }
+h1 small { color: var(--dim); font-size: 14px; font-weight: 400; margin-left: 8px; letter-spacing: 0; }
+.lead { color: var(--dim); margin: 4px 0 20px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; margin: 0 0 10px; }
+.step { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 6px; }
+.hint { color: var(--dim); font-size: 13px; margin: 6px 0 0; }
+.hint code { color: var(--text); }
+#problems { border-color: var(--warn); }
+#problems ul { margin: 0; padding-left: 20px; }
+#drop {
+  display: block; border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center;
+  cursor: pointer; color: var(--dim); background: var(--panel2);
+}
+#drop:hover, #drop.over { border-color: var(--accent); color: var(--text); }
+#drop.has { border-style: solid; border-color: var(--accent); color: var(--text); }
+#drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+#drop:focus-within { outline: 2px solid var(--accent2); outline-offset: 2px; }
+label.check { display: inline-flex; gap: 8px; align-items: center; margin-top: 10px; color: var(--dim); cursor: pointer; }
+textarea, input[type=text], input[type=number], select {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; width: 100%;
+}
+textarea { min-height: 220px; resize: vertical; line-height: 1.6; }
+textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent2); outline-offset: 0; border-color: transparent; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.row label, .field label { display: block; color: var(--dim); font-size: 13px; margin-bottom: 4px; }
+.field { margin-top: 12px; }
+.offset { display: flex; align-items: center; gap: 8px; }
+.offset input { width: 110px; }
+select { width: auto; max-width: 100%; }
+details summary { cursor: pointer; color: var(--dim); }
+details[open] summary { margin-bottom: 10px; }
+button {
+  font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 16px; cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--dim); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: #1a1200; border-color: var(--accent); font-weight: 600; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+#go { width: 100%; padding: 12px; font-size: 16px; }
+.bar { height: 8px; background: var(--panel2); border-radius: 4px; overflow: hidden; margin: 10px 0 6px; }
+.bar div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.bar.busy div { width: 30%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .bar.busy div { animation: none; width: 100%; opacity: .5; } }
+#stepText { font-weight: 600; }
+#elapsed { color: var(--dim); font-variant-numeric: tabular-nums; }
+#result.ok { border-color: var(--ok); }
+#result.err { border-color: var(--warn); }
+#resultText strong { color: var(--ok); }
+#result.err #resultText strong { color: var(--warn); }
+.path { font: 12px ui-monospace, Menlo, monospace; color: var(--dim); word-break: break-all; }
+#msg { color: var(--warn); margin: 8px 0 0; min-height: 1.5em; }
+@media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kizami <small>song + lyrics → TTML</small></h1>
+  <p class="lead">Lyrics that light up when the voice starts each phrase. Everything runs on this computer.</p>
+
+  <section class="card" id="problems" hidden>
+    <h2>Setup needed</h2>
+    <ul id="problemList"></ul>
+  </section>
+
+  <form id="form" autocomplete="off">
+    <section class="card">
+      <h2><span class="step">1</span>Song file</h2>
+      <label id="drop">
+        <input type="file" id="file" accept="audio/*,.opus,.m4a,.flac,.aiff,.aif,.webm">
+        <span id="dropText">Drop the song here, or click to choose a file</span>
+      </label>
+      <label class="check"><input type="checkbox" id="isVocals"> This file is a vocal track already (skip vocal separation)</label>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">2</span>Lyrics</h2>
+      <textarea id="lyrics" spellcheck="false" placeholder="Paste the lyrics here, one lyric line per line."></textarea>
+      <p class="hint">Blank lines and section tags such as <code>[Chorus]</code> are skipped. When a word is sung differently from how it is written, give the reading in braces: <code>明日{あした}</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2><span class="step">3</span>Output</h2>
+      <div class="field">
+        <label class="check" style="margin-top:0"><input type="checkbox" id="spaces" checked> Space after each chunk</label>
+        <p class="hint">Kanji stay as written. Only a kanji word with a chunk starting inside it (the が of 願い) is shown in hiragana. The space choice, like the offset below, can be changed after the song is done: just download again.</p>
+      </div>
+      <div class="field">
+        <label for="offset">Display offset (ms)</label>
+        <div class="offset"><input type="number" id="offset" step="10" value="0"><span class="hint" style="margin:0">0 = as timed</span></div>
+        <p class="hint">Moves every time in the TTML file. Positive shows the lyrics later (for example with Bluetooth earphones), negative earlier. You can change it after the song is done and download again.</p>
+      </div>
+      <details class="field">
+        <summary>Song details for the TTML file (optional)</summary>
+        <div class="row">
+          <div><label for="title">Title</label><input type="text" id="title" maxlength="200"></div>
+          <div><label for="artist">Artist</label><input type="text" id="artist" maxlength="200"></div>
+        </div>
+      </details>
+    </section>
+
+    <button type="submit" class="primary" id="go">Make TTML</button>
+    <p id="msg" role="alert"></p>
+  </form>
+
+  <section class="card" id="progress" hidden aria-live="polite">
+    <h2 id="progName">Working</h2>
+    <div><span id="stepText">Starting</span> <span id="elapsed"></span></div>
+    <div class="bar busy" id="bar"><div></div></div>
+    <p class="hint">This can take a few minutes. The same song file is separated only once, so a second run is faster. You can leave this page open in the background.</p>
+  </section>
+
+  <section class="card" id="result" hidden aria-live="polite">
+    <h2 id="resultName">Result</h2>
+    <p id="resultText"></p>
+    <label class="check" id="useTaggerWrap" hidden><input type="checkbox" id="useTagger" checked> <span id="useTaggerText">Use the fixes saved in the tagger</span></label>
+    <div class="actions">
+      <button type="button" class="primary" id="download">Download TTML</button>
+      <button type="button" id="tagger" title="Listen to the timing and fix it by tapping">Check in the tagger</button>
+    </div>
+    <p class="hint">Song folder: <span class="path" id="folder"></span></p>
+  </section>
+</main>
+<script>
+'use strict';
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+const $ = id => document.getElementById(id);
+let job = null, pollTimer = null, maxOffset = 10000;
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+function msg(text) { $('msg').textContent = text || ''; }
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({ 'X-Kizami-Token': TOKEN }, opts.headers || {});
+  const r = await fetch(path, Object.assign({}, opts, { headers }));
+  if (!r.ok) throw new Error((await r.text()) || `${r.status}`);
+  return r;
+}
+
+/* ---------- settings kept in this browser ---------- */
+function loadSettings() {
+  try {
+    const o = JSON.parse(localStorage.getItem('kizami-app') || '{}');
+    if (Number.isFinite(o.offset)) $('offset').value = o.offset;
+    if (typeof o.spaces === 'boolean') $('spaces').checked = o.spaces;
+  } catch (e) { /* storage blocked */ }
+}
+function saveSettings() {
+  const o = { offset: offsetMs(), spaces: $('spaces').checked };
+  try { localStorage.setItem('kizami-app', JSON.stringify(o)); } catch (e) { /* storage blocked */ }
+}
+function offsetMs() {
+  const v = Math.round(Number($('offset').value));
+  return Number.isFinite(v) ? Math.max(-maxOffset, Math.min(maxOffset, v)) : 0;
+}
+
+/* ---------- song file ---------- */
+function chosenFile() { return $('file').files && $('file').files[0]; }
+function showFile() {
+  const f = chosenFile();
+  $('drop').classList.toggle('has', !!f);
+  $('dropText').textContent = f ? `${f.name} (${(f.size / 1048576).toFixed(1)} MB)` : 'Drop the song here, or click to choose a file';
+}
+$('file').addEventListener('change', showFile);
+const drop = $('drop');
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+drop.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  if (e.dataTransfer.files.length) { $('file').files = e.dataTransfer.files; showFile(); }
+});
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => e.preventDefault());
+
+/* ---------- run ---------- */
+$('form').addEventListener('submit', async e => {
+  e.preventDefault();
+  msg('');
+  const f = chosenFile(), lyrics = $('lyrics').value;
+  if (!f) { msg('Choose the song file first.'); return; }
+  if (!lyrics.trim()) { msg('Paste the lyrics first.'); $('lyrics').focus(); return; }
+  saveSettings();
+  $('go').disabled = true;
+  showProgress({ name: f.name, step: 'sending the song to the local server', percent: null, seconds: 0 });
+  try {
+    const up = await (await api('/api/upload', {
+      method: 'POST', body: f, headers: { 'X-File-Name': encodeURIComponent(f.name), 'Content-Type': 'application/octet-stream' },
+    })).json();
+    const started = await (await api('/api/jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        upload: up.upload, lyrics, is_vocals: $('isVocals').checked, offset_ms: offsetMs(),
+        title: $('title').value, artist: $('artist').value,
+      }),
+    })).json();
+    follow(started, true);
+  } catch (err) {
+    $('progress').hidden = true; $('go').disabled = false;
+    msg(`Could not start: ${err.message}`);
+  }
+});
+
+function follow(j, fresh) {
+  const was = job && job.id === j.id ? job.state : null;
+  job = j; render(j);
+  if (fresh || (was === 'running' && j.state !== 'running')) {
+    $(j.state === 'running' ? 'progress' : 'result').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  clearTimeout(pollTimer);
+  if (j.state === 'running') pollTimer = setTimeout(poll, 700);
+}
+async function poll() {
+  try { follow(await (await api(`/api/jobs/${job.id}`)).json()); }
+  catch (err) { pollTimer = setTimeout(poll, 2000); }
+}
+
+function showProgress(j) {
+  $('progress').hidden = false; $('result').hidden = true;
+  $('progName').textContent = `Working on ${j.name}`;
+  $('stepText').textContent = j.step.charAt(0).toUpperCase() + j.step.slice(1);
+  $('elapsed').textContent = j.seconds ? `${Math.round(j.seconds)} s` : '';
+  const pct = j.percent;
+  $('bar').classList.toggle('busy', pct == null);
+  $('bar').firstElementChild.style.width = pct == null ? '' : `${pct}%`;
+}
+
+function render(j) {
+  if (j.state === 'running') { $('go').disabled = true; showProgress(j); return; }
+  $('go').disabled = false; $('progress').hidden = true;
+  const box = $('result'); box.hidden = false;
+  box.className = 'card ' + (j.state === 'done' ? 'ok' : 'err');
+  $('resultName').textContent = j.name;
+  const t = $('resultText'); t.textContent = '';
+  const head = document.createElement('strong');
+  if (j.state === 'done') {
+    head.textContent = `Done in ${Math.round(j.seconds)} s. `;
+    t.append(head, `${plural(j.counts.chunks, 'chunk')} in ${plural(j.counts.lines, 'line')}.`);
+    if (j.counts.uncertain) t.append(` ${plural(j.counts.uncertain, 'chunk')} had no clear attack; the tagger marks them with ?.`);
+  } else {
+    head.textContent = 'Failed. ';
+    t.append(head, j.error || 'Unknown error.');
+  }
+  $('download').hidden = $('tagger').hidden = j.state !== 'done';
+  $('folder').textContent = j.folder || '';
+  $('useTaggerWrap').hidden = !(j.state === 'done' && j.tagger_saved);
+  if (j.tagger_saved) $('useTaggerText').textContent = `Use the fixes saved in the tagger (${j.tagger_saved})`;
+}
+
+/* ---------- result actions ---------- */
+$('download').addEventListener('click', async () => {
+  if (!job) return;
+  saveSettings();
+  const source = !$('useTaggerWrap').hidden && $('useTagger').checked ? 'tagger' : 'generated';
+  const spaces = $('spaces').checked ? 1 : 0;
+  try {
+    const r = await api(`/api/jobs/${job.id}/ttml?offset_ms=${offsetMs()}&source=${source}&spaces=${spaces}`);
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = job.ttml_name;
+    document.body.appendChild(a); a.click(); a.remove();            // Firefox needs the link in the page
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  } catch (err) { alertResult(`Download failed: ${err.message}`); }
+});
+
+$('tagger').addEventListener('click', async () => {
+  if (!job) return;
+  const win = window.open('about:blank', '_blank');                 // opened now, so no popup blocker
+  try {
+    const { url } = await (await api(`/api/jobs/${job.id}/tagger`, { method: 'POST' })).json();
+    if (win) { win.opener = null; win.location.href = url; } else location.assign(url);
+  } catch (err) { if (win) win.close(); alertResult(`The tagger could not be opened: ${err.message}`); }
+});
+
+function alertResult(text) {
+  const p = document.createElement('p'); p.className = 'hint'; p.style.color = 'var(--warn)'; p.textContent = text;
+  $('result').appendChild(p); setTimeout(() => p.remove(), 8000);
+}
+
+// When the tagger saved fixes, show the choice to use them.
+window.addEventListener('focus', async () => {
+  if (!job || job.state !== 'done') return;
+  try { const j = await (await api(`/api/jobs/${job.id}`)).json(); job = j; render(j); } catch (e) { /* server stopped */ }
+});
+
+/* ---------- start ---------- */
+(async function init() {
+  loadSettings();
+  if (!TOKEN) { msg('Open this page with the address that "kizami app" printed.'); $('go').disabled = true; return; }
+  try {
+    const info = await (await api('/api/info')).json();
+    maxOffset = info.max_offset_ms || maxOffset;
+    if (info.problems.length) {
+      $('problems').hidden = false;
+      for (const p of info.problems) { const li = document.createElement('li'); li.textContent = p; $('problemList').appendChild(li); }
+    }
+    if (info.latest) follow(await (await api(`/api/jobs/${info.latest}`)).json());
+  } catch (err) { msg(`The local server does not answer (${err.message}). Is "kizami app" still running?`); }
+})();
+</script>
+</body>
+</html>

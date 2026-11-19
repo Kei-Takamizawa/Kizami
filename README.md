@@ -4,9 +4,9 @@ Kizami makes timed lyrics for Japanese songs, for karaoke-style lyric
 players. Each piece of text lights up at the moment the singer starts to
 sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
 
-> **Status: early development.** `kizami generate` makes chunk timing from a
-> separated vocal track and a lyrics file, and `kizami tagger` lets you
-> correct it. Export to lyric-player formats (TTML, LRC) is not built yet.
+> **Status: early development.** The app makes a TTML file from a song file
+> and its lyrics. Timing is measured on four test songs; see
+> [Generating timing](docs/generate.md#measured-accuracy).
 
 ## What makes it different
 
@@ -14,21 +14,44 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
   grammar boundaries.
 - **Chunks start on strong attacks.** A new chunk starts at each word and
   at each strong attack inside a word, so the text moves with the groove.
-- **Kanji shown in hiragana.** Kanji are written as their reading
-  (`願い` becomes `ねがい`), so a chunk can start at a strong attack inside a
-  kanji, such as the `が` of `願`.
+- **Chunks can start inside a kanji.** A chunk can start at a strong attack
+  inside a kanji, such as the `が` of `願`. Kanji stay as written; only a
+  word that is split this way is shown in hiragana (`ね` `がい`).
 - **Everything runs on your computer.** You give Kizami a song file and a
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
 
-## Planned for the first release
+## Make a TTML file
 
-- Input: a lyrics text file and a normal mixed song file.
-- Output: TTML for lyric players such as AMLL. LRC and ASS on request.
+`kizami app` opens a simple page in your browser. Choose a song file, paste
+the lyrics, and press **Make TTML**. Kizami takes the voice out of the song,
+times the lyrics, and gives you a TTML file for lyric players such as AMLL.
+If a part is off, open it in the tagger from the same page, fix it by ear, and
+download again.
+
+```
+pip install -e ".[app]"
+kizami app --model-dir path/to/models
+```
+
+On a Mac, `kizami app --make-launcher --model-dir path/to/models` puts a
+`Kizami.command` file on the Desktop: after that, a double-click (or one click
+in the Dock) opens the app.
+
+You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
+once). On an Apple silicon Mac, a song of about five minutes took 67 seconds
+to separate the voice (once per song) and 40 seconds to time. You can choose
+a space after each chunk and a display offset for players or earphones that
+play the sound late. See
+[the app guide](docs/app.md).
+
+## Planned
+
+- LRC and ASS output.
 - Singer parts for duets, from tags in the lyrics file.
-- Japanese first. Korean is planned for later.
+- Korean, after Japanese.
 
-## What you can do today
+## Measure the timing
 
 Measure how close a timing file is to a hand-made reference.
 
@@ -66,8 +89,10 @@ Measure how close a timing file is to a hand-made reference.
 track, separated from the mix beforehand) and `lyrics.txt`, and writes the
 timing next to them as `auto_chu.json` and `auto_labels_chu.txt`. A chunk
 starts at each word (with its particles), at the strongest attacks inside
-words, and after a pause or long note of 1 second or more. Kanji are written in hiragana; add `--kanji keep` to keep them as
-written.
+words, and after a pause or long note of 1 second or more. Kanji stay as
+written; a kanji word with a chunk starting inside it is written in hiragana
+(`--kanji hiragana` writes all kanji in hiragana, `--kanji keep` never splits
+a kanji).
 
 ```
 pip install -e ".[generate]"
@@ -101,6 +126,9 @@ result is saved in the same folder as `tagger_labels.txt`, which
 
 ## Documents
 
+- [App guide](docs/app.md): song file and lyrics in, TTML out.
+- [TTML output](docs/ttml.md): what the TTML file holds, where a chunk ends,
+  `kizami ttml`.
 - [Design](docs/design.md): goals, definitions, evaluation method, planned
   pipeline.
 - [Generating timing](docs/generate.md): model setup, options, how a chunk
