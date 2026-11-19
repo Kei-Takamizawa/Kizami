@@ -20,6 +20,8 @@ from kizami.evaluate import (
     format_report,
     result_to_dict,
 )
+from kizami.app import DEFAULT_PORT as DEFAULT_APP_PORT
+from kizami.app import DEFAULT_WORK_DIR as DEFAULT_APP_WORK_DIR
 from kizami.tagger import DEFAULT_OUTPUT as DEFAULT_TAGGER_OUTPUT
 from kizami.tagger import DEFAULT_PORT as DEFAULT_TAGGER_PORT
 from kizami.tagger import TaggerError, serve
@@ -156,6 +158,49 @@ def _build_parser() -> argparse.ArgumentParser:
         "--details", action="store_true", help="list every boundary that is not a hit"
     )
     evaluate.add_argument("--json", action="store_true", help="print the results as JSON")
+
+    ttml = commands.add_parser(
+        "ttml",
+        help="write a timing file or tagger project as TTML for lyric players such as AMLL",
+        description=(
+            "Write TTML with one span per chunk. A chunk ends where the voice stops (read from the vocal "
+            "track) or where the next chunk starts."
+        ),
+    )
+    ttml.add_argument("timing", help="timing file (for example auto_chu.json) or tagger project (tagger.json)")
+    ttml.add_argument("-o", "--output", help="TTML file to write (default: the input name with .ttml)")
+    ttml.add_argument(
+        "--audio",
+        help="vocal track (PCM WAV) to find where the voice stops (default: vocals.wav next to the input, if it is there)",
+    )
+    ttml.add_argument("--no-audio", action="store_true", help="do not read audio; end chunks at the next start")
+    ttml.add_argument(
+        "--offset-ms",
+        type=int,
+        default=0,
+        help="move every time by this many ms in the file only; positive shows the lyrics later (default 0)",
+    )
+    ttml.add_argument("--title", help="song title to store in the file")
+    ttml.add_argument("--artist", action="append", default=[], help="artist to store in the file (repeat for more)")
+    ttml.add_argument("--album", help="album to store in the file")
+    ttml.add_argument("--lang", default="ja", help="language code of the lyrics (default ja)")
+
+    app = commands.add_parser(
+        "app",
+        help="open the app in the browser: a song file and pasted lyrics in, a TTML file out",
+    )
+    app.add_argument(
+        "--model-dir",
+        default=os.environ.get(MODEL_DIR_ENV),
+        help=f"folder with w2v2-hiragana/ and optionally mms_fa/model.pt (default ${MODEL_DIR_ENV})",
+    )
+    app.add_argument(
+        "--work-dir",
+        default=DEFAULT_APP_WORK_DIR,
+        help=f"folder that keeps one folder per song (default ./{DEFAULT_APP_WORK_DIR})",
+    )
+    app.add_argument("--port", type=int, default=DEFAULT_APP_PORT, help="port on this computer to use")
+    app.add_argument("--no-browser", action="store_true", help="print the address but do not open the browser")
 
     tagger = commands.add_parser(
         "tagger",
@@ -341,6 +386,52 @@ def _run_generate(args: argparse.Namespace) -> None:
         print(f"{lv.level}: {lv.chunks} chunks ({lv.uncertain} uncertain) -> {lv.timing}, {lv.labels}")
 
 
+def _run_ttml(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from kizami.ttml import TtmlError, document_to_ttml, load_for_export
+
+    source = Path(args.timing)
+    out = Path(args.output) if args.output else source.with_suffix(".ttml")
+    if out.resolve() == source.resolve():
+        raise CliError("the output must not be the input file")
+    audio = None
+    if not args.no_audio:
+        audio = Path(args.audio) if args.audio else source.with_name("vocals.wav")
+        if args.audio is None and not audio.is_file():
+            audio = None
+    try:
+        doc = load_for_export(source)
+        if audio is not None:
+            try:
+                from kizami.loudness import LoudnessError, add_end_times, loudness_from_wav
+            except ImportError as exc:
+                raise CliError('reading the audio needs numpy. Install it with: pip install "kizami[audio]", or use --no-audio') from exc
+            try:
+                doc = add_end_times(doc, loudness_from_wav(audio))
+            except LoudnessError as exc:
+                raise CliError(str(exc)) from exc
+        text = document_to_ttml(
+            doc, offset_ms=args.offset_ms, title=args.title, artists=args.artist, album=args.album, lang=args.lang
+        )
+    except TtmlError as exc:
+        raise CliError(str(exc)) from exc
+    out.write_text(text, encoding="utf-8")
+    chunks = sum(len(line.chunks) for line in doc.lines)
+    ends = f"ends from {audio.name}" if audio is not None else "ends at the next chunk (no audio)"
+    print(f"Wrote {len(doc.lines)} lines, {chunks} chunks to {out} ({ends}, offset {args.offset_ms:+d} ms)")
+
+
+def _run_app(args: argparse.Namespace) -> None:
+    from kizami.app import AppError
+    from kizami.app import serve as serve_app
+
+    try:
+        serve_app(work_dir=args.work_dir, model_dir=args.model_dir, port=args.port, open_browser=not args.no_browser)
+    except AppError as exc:
+        raise CliError(str(exc)) from exc
+
+
 def _run_tagger(args: argparse.Namespace) -> None:
     try:
         serve(
@@ -367,6 +458,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_export_labels(args)
         elif args.command == "tagger":
             _run_tagger(args)
+        elif args.command == "ttml":
+            _run_ttml(args)
+        elif args.command == "app":
+            _run_app(args)
         else:
             _run_eval(args)
     except CliError as exc:

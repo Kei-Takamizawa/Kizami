@@ -11,6 +11,7 @@ dist/
 # Copyrighted material must never be committed.
 # Reference timing files contain lyric text, so they stay local too.
 eval/data/
+kizami-songs/
 separated/
 *.wav
 *.mp3
@@ -18,6 +19,9 @@ separated/
 *.m4a
 *.aiff
 *.ogg
+*.opus
+# TTML files hold lyric text.
+*.ttml
 
 # OS
 .DS_Store

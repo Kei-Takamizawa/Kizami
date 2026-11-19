@@ -22,6 +22,8 @@ generate = [
     "sudachipy>=0.6.8",
     "sudachidict_core>=20240409",
 ]
+separate = ["demucs>=4.0.1", "numpy>=1.26"]
+app = ["kizami[generate,separate]"]
 dev = ["pytest>=8", "numpy>=1.26"]
 
 [project.scripts]
@@ -31,7 +33,7 @@ kizami = "kizami.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-kizami = ["tagger/*.html"]
+kizami = ["tagger/*.html", "app/*.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

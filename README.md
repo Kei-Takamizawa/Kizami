@@ -4,9 +4,9 @@ Kizami makes timed lyrics for Japanese songs, for karaoke-style lyric
 players. Each piece of text lights up at the moment the singer starts to
 sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
 
-> **Status: early development.** `kizami generate` makes chunk timing from a
-> separated vocal track and a lyrics file, and `kizami tagger` lets you
-> correct it. Export to lyric-player formats (TTML, LRC) is not built yet.
+> **Status: early development.** The app makes a TTML file from a song file
+> and its lyrics. Timing is measured on four test songs; see
+> [Generating timing](docs/generate.md#measured-accuracy).
 
 ## What makes it different
 
@@ -21,14 +21,31 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
 
-## Planned for the first release
+## Make a TTML file
 
-- Input: a lyrics text file and a normal mixed song file.
-- Output: TTML for lyric players such as AMLL. LRC and ASS on request.
+`kizami app` opens a simple page in your browser. Choose a song file, paste
+the lyrics, and press **Make TTML**. Kizami takes the voice out of the song,
+times the lyrics, and gives you a TTML file for lyric players such as AMLL.
+If a part is off, open it in the tagger from the same page, fix it by ear, and
+download again.
+
+```
+pip install -e ".[app]"
+kizami app --model-dir path/to/models
+```
+
+You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
+once). Timing a four-minute song takes about 40 seconds on an Apple silicon
+Mac, plus the vocal separation, which runs once per song. There is also a display offset for players or earphones that play the sound
+late. See [the app guide](docs/app.md).
+
+## Planned
+
+- LRC and ASS output.
 - Singer parts for duets, from tags in the lyrics file.
-- Japanese first. Korean is planned for later.
+- Korean, after Japanese.
 
-## What you can do today
+## Measure the timing
 
 Measure how close a timing file is to a hand-made reference.
 
@@ -101,6 +118,9 @@ result is saved in the same folder as `tagger_labels.txt`, which
 
 ## Documents
 
+- [App guide](docs/app.md): song file and lyrics in, TTML out.
+- [TTML output](docs/ttml.md): what the TTML file holds, where a chunk ends,
+  `kizami ttml`.
 - [Design](docs/design.md): goals, definitions, evaluation method, planned
   pipeline.
 - [Generating timing](docs/generate.md): model setup, options, how a chunk
