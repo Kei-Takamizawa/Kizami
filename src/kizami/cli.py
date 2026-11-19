@@ -44,8 +44,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "generate",
         help="make chunk timing for a song from its vocal track and lyrics",
         description=(
-            "Write auto_{dai,chu,sho}.json and auto_labels_{dai,chu,sho}.txt: chunk timing at three "
-            "levels (words, plus strong attacks, every character). Prints counts only."
+            "Write auto_chu.json and auto_labels_chu.txt: chunk timing that starts a chunk at each word "
+            "and at the strongest attacks inside words, with kanji shown in hiragana. Prints counts only."
         ),
     )
     gen.add_argument("folder", nargs="?", help="song folder with vocals.wav and lyrics.txt")
@@ -54,9 +54,15 @@ def _build_parser() -> argparse.ArgumentParser:
     gen.add_argument("-o", "--out-dir", help="folder to write to (default: the song folder)")
     gen.add_argument(
         "--level",
-        default="all",
-        choices=["all", "dai", "chu", "sho"],
-        help="level to write: dai (words), chu (plus strong attacks), sho (characters); default all",
+        default="chu",
+        choices=["chu", "dai", "sho", "all"],
+        help="level to write: chu (words plus strong attacks, default); dai (words) and sho (every kana) for comparison",
+    )
+    gen.add_argument(
+        "--kanji",
+        default="hiragana",
+        choices=["hiragana", "keep"],
+        help="show kanji as their reading in hiragana, so a chunk can start inside one (default), or keep them",
     )
     gen.add_argument(
         "--model-dir",
@@ -157,7 +163,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     tagger.add_argument("folder", help="song folder with the audio file and lyrics.txt")
     tagger.add_argument(
-        "--labels", help="label file in the folder to start from, for example auto_labels.txt"
+        "--labels",
+        help="label file (.txt) or timing file (.json) in the folder to start from, for example auto_chu.json",
     )
     tagger.add_argument(
         "--output",
@@ -315,6 +322,7 @@ def _run_generate(args: argparse.Namespace) -> None:
             lyrics=args.lyrics,
             out_dir=args.out_dir,
             levels=LEVELS if args.level == "all" else (args.level,),
+            kanji=args.kanji,
             mms=args.mms,
             cache=args.cache,
             params={"anchor": args.anchor},
@@ -326,7 +334,7 @@ def _run_generate(args: argparse.Namespace) -> None:
     second = f"{result.from_second_aligner} from the second model" if result.used_second_aligner else "second model off"
     print(
         f"{result.lines} lines, {result.units} units, {result.with_attack} on a clear attack, {second}, "
-        f"{result.kanji_kept_whole} kanji compounds kept whole"
+        f"{result.kanji_kept_whole} kanji compounds timed as one unit"
     )
     print("chunk start rule: " + ", ".join(f"{k} {v}" for k, v in result.start_rules.items()))
     for lv in result.levels:

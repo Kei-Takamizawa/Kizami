@@ -3,15 +3,17 @@
     from kizami.generate import generate
     result = generate("songs/demo", model_dir="models")
 
-writes, next to the audio unless ``out_dir`` is given, one timing file and
-one Audacity label file per level:
+writes, next to the audio unless ``out_dir`` is given, a timing file and an
+Audacity label file for level chu (medium):
 
-* ``auto_dai.json`` / ``auto_labels_dai.txt``: a word with its particles
-  per chunk.
-* ``auto_chu.json`` / ``auto_labels_chu.txt``: level dai plus the strongest
-  attacks inside words.
-* ``auto_sho.json`` / ``auto_labels_sho.txt``: every character with a sound
-  of its own (a kanji compound is split per kanji).
+* ``auto_chu.json`` / ``auto_labels_chu.txt``: a chunk starts at each word
+  (with its particles) and at the strongest attacks inside words.
+
+Kanji are shown as their reading in hiragana by default (``kanji="hiragana"``),
+so a chunk can also start inside a kanji, such as at the が of 願.
+Two more levels can be asked for with ``levels``, for comparison:
+``dai`` (a word with its particles per chunk) and ``sho`` (every kana or
+character with a sound of its own).
 
 The same character has the same start time at every level. A chunk with no
 clear attack of its own is marked uncertain (``?`` in the label file).
@@ -37,6 +39,8 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 LEVELS = ("dai", "chu", "sho")
+DEFAULT_LEVELS = ("chu",)
+KANJI_MODES = ("hiragana", "keep")
 KANA_MODEL = "w2v2-hiragana"
 MMS_MODEL = Path("mms_fa") / "model.pt"
 REQUIRED_MODULES = {
@@ -94,7 +98,8 @@ def generate(
     vocals: str | Path | None = None,
     lyrics: str | Path | None = None,
     out_dir: str | Path | None = None,
-    levels: Iterable[str] = LEVELS,
+    levels: Iterable[str] = DEFAULT_LEVELS,
+    kanji: str = "hiragana",
     mms: str = "auto",
     cache: str | Path | None = None,
     params: dict | None = None,
@@ -103,7 +108,9 @@ def generate(
     """Write timing and label files for one song. See the module docstring.
 
     ``folder`` holds ``vocals.wav`` and ``lyrics.txt`` unless ``vocals`` and
-    ``lyrics`` name other files. ``mms`` is ``"auto"`` (use the second model if
+    ``lyrics`` name other files. ``kanji`` is ``"hiragana"`` (show kanji as
+    their reading; a chunk can start at a strong attack inside one) or
+    ``"keep"`` (show kanji as written; a kanji never splits). ``mms`` is ``"auto"`` (use the second model if
     its file is there), ``"on"`` or ``"off"``. ``cache`` is a folder where the
     model outputs are kept, so a second run on the same audio is fast.
     ``params`` overrides values of ``kizami.generate.place.DEFAULTS``.
@@ -114,6 +121,8 @@ def generate(
     unknown = [lv for lv in levels if lv not in LEVELS]
     if unknown or not levels:
         raise GenerateError(f"levels must be some of: {', '.join(LEVELS)}")
+    if kanji not in KANJI_MODES:
+        raise GenerateError(f"kanji must be one of: {', '.join(KANJI_MODES)}")
     if mms not in ("auto", "on", "off"):
         raise GenerateError('mms must be "auto", "on" or "off"')
     if folder is None and (vocals is None or lyrics is None):
@@ -218,9 +227,12 @@ def generate(
         used_second_aligner=use_mms,
         start_rules=dict(sorted(rules.items())),
     )
+    if kanji == "hiragana":
+        atoms = text.to_hiragana(lines, atoms)  # after the threshold, so the kanji's morae do not move it
     out.mkdir(parents=True, exist_ok=True)
     for level in levels:
-        result.levels.append(_write_level(out, level, lines, place.select(atoms, level, p["m_thr"]), p, atoms))
+        chosen = place.select(atoms, level, p["m_thr"])
+        result.levels.append(_write_level(out, level, lines, chosen, p, atoms, kanji))
     return result
 
 
@@ -228,7 +240,7 @@ def _ms(seconds: float) -> int:
     return max(0, int(round(seconds * 1000)))
 
 
-def _write_level(out: Path, level: str, lines, chosen, p, atoms=None) -> LevelResult:
+def _write_level(out: Path, level: str, lines, chosen, p, atoms=None, kanji: str = "keep") -> LevelResult:
     from kizami.audacity import label_text_from_document
     from kizami.generate.place import chunks_for
     from kizami.timing import Chunk, Line, Mora, TimingDocument, save_document
@@ -253,7 +265,7 @@ def _write_level(out: Path, level: str, lines, chosen, p, atoms=None) -> LevelRe
         raise GenerateError("no chunk could be placed")
     params = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()}
     doc = TimingDocument(lines=tuple(doc_lines), kind="generated",
-                         meta={"source": "kizami generate", "level": level, "params": params})  # fmt: skip
+                         meta={"source": "kizami generate", "level": level, "kanji": kanji, "params": params})  # fmt: skip
     timing = out / f"auto_{level}.json"
     labels = out / f"auto_labels_{level}.txt"
     save_document(doc, timing)

@@ -12,9 +12,11 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
 
 - **Timing follows the voice.** Text changes at the vocal attack, not at
   grammar boundaries.
-- **Three chunk sizes.** Words with their particles (`夜空を`), words plus
-  the strong attacks inside them, or every character (`夜`, `空`, `を`). The
-  same character starts at the same time in all three.
+- **Chunks start on strong attacks.** A new chunk starts at each word and
+  at each strong attack inside a word, so the text moves with the groove.
+- **Kanji shown in hiragana.** Kanji are written as their reading
+  (`願い` becomes `ねがい`), so a chunk can start at a strong attack inside a
+  kanji, such as the `が` of `願`.
 - **Everything runs on your computer.** You give Kizami a song file and a
   lyrics text file that you already have. Kizami does not download, store,
   or share lyrics or audio.
@@ -62,13 +64,10 @@ Measure how close a timing file is to a hand-made reference.
 
 `kizami generate` reads a song folder that holds `vocals.wav` (the vocal
 track, separated from the mix beforehand) and `lyrics.txt`, and writes the
-timing at three levels next to them:
-
-| Level | Files | One chunk is |
-|---|---|---|
-| `dai` | `auto_dai.json`, `auto_labels_dai.txt` | a word with its particles |
-| `chu` | `auto_chu.json`, `auto_labels_chu.txt` | `dai` plus the strongest attacks inside words |
-| `sho` | `auto_sho.json`, `auto_labels_sho.txt` | every character with a sound of its own |
+timing next to them as `auto_chu.json` and `auto_labels_chu.txt`. A chunk
+starts at each word (with its particles) and at the strongest attacks inside
+words. Kanji are written in hiragana; add `--kanji keep` to keep them as
+written.
 
 ```
 pip install -e ".[generate]"
@@ -77,9 +76,10 @@ kizami generate path/to/song-folder --model-dir path/to/models
 
 It needs the `ffmpeg` program and about 2.5 GB of model files, which you
 download once into the model folder (or set `KIZAMI_MODEL_DIR` to it). A song
-takes about 40 seconds on an Apple silicon Mac. Open the label files in
-`kizami tagger` or Audacity to review them; a `?` before the text means no
-clear attack was found for that chunk. See [Generating timing](docs/generate.md)
+takes about 40 seconds on an Apple silicon Mac. To review it, open the
+timing file in the tagger with `kizami tagger path/to/song-folder --labels
+auto_chu.json`; a `?` before the text means no clear attack was found for
+that chunk. See [Generating timing](docs/generate.md)
 for the model setup and how a chunk start is chosen.
 
 ## Tag timing by tapping

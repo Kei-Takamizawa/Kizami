@@ -213,7 +213,8 @@ def mora_groups(kana):
 
 
 def place_morae(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
-    """Set ``morae`` on each placed unit: ``[(kana, start time, has an attack), ...]``.
+    """Set ``morae`` on each placed unit: ``[(kana, start time, has an attack), ...]``,
+    and ``mora_strengths``: the strength of each mora's attack (0 for none).
 
     The first mora starts with the unit. A later mora (the が of 願) is found
     like a unit: its aligned time snaps to the best attack nearby, and its start
@@ -225,6 +226,7 @@ def place_morae(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
     for n, a in enumerate(timed):
         groups = mora_groups(a["kana"])
         a["morae"] = [(groups[0][0], a["time"], a["snapped"])] if groups else []
+        a["mora_strengths"] = [a["strength"]] if groups else []
         if len(groups) < 2 or len(a.get("kana_starts", ())) != len(a["kana"]):
             continue
         nxt = timed[n + 1] if n + 1 < len(timed) else None
@@ -258,6 +260,7 @@ def place_morae(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
             else:
                 start = min(max(start, lo), hi)
             a["morae"].append((text, start, best is not None))
+            a["mora_strengths"].append(float(strengths[best]) if best is not None else 0.0)
             prev_on, prev_t = max(t, start), start
 
 

@@ -117,6 +117,62 @@ def test_given_reading_is_used_and_the_rest_of_the_word_keeps_its_own(tmp_path):
     assert units[1] == ("日", "ひ")
 
 
+def test_units_with_kanji_record_their_reading_in_hiragana(tmp_path):
+    assert [a["hiragana"] for a in _units("願いを")[1]] == ["ねが", None, None]
+    assert [a["hiragana"] for a in _units("待って")[1]] == ["まっ", None]  # the joined っ is part of it
+    assert [a["hiragana"] for a in _units("今日も")[1]] == ["きょう", None]
+    assert [a["hiragana"] for a in _units("宇宙{そら}をタワー", tmp_path)[1]] == ["そら", None, None, None]
+
+
+def _placed_line(display, morae_of):
+    """Units of one line, placed by hand: ``morae_of[i]`` is ``[(kana, time, strength), ...]`` for unit i."""
+    _, atoms, _ = _units(display)
+    for a, morae in zip(atoms, morae_of):
+        a.update(time=morae[0][1], snapped=morae[0][2] > 0, strength=morae[0][2], why="")
+        a["morae"] = [(k, t, s > 0) for k, t, s in morae]
+        a["mora_strengths"] = [s for _, _, s in morae]
+    return [{"display": display}], atoms
+
+
+def test_hiragana_gives_every_mora_of_a_kanji_its_own_unit():
+    from kizami.generate.text import to_hiragana
+
+    lines, atoms = _placed_line("願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]])
+
+    out = to_hiragana(lines, atoms)
+
+    assert (lines[0]["display"], lines[0]["original"]) == ("ねがいを", "願いを")
+    assert [lines[0]["display"][u["offset"] : u["end"]] for u in out] == ["ね", "が", "い", "を"]
+    assert [u["written"] for u in out] == [0, None, 1, 2]  # が has no place in the written text
+    assert [u["word_start"] for u in out] == [True, False, False, True]
+    assert (out[1]["time"], out[1]["snapped"], out[1]["strength"]) == (1.3, True, 3.8)
+    assert out[0]["time"] == 1.0 and out[0]["morae"] == [("ね", 1.0, True)]
+
+
+def test_hiragana_keeps_a_kanji_whole_when_its_morae_are_not_known():
+    from kizami.generate.text import to_hiragana
+
+    lines, atoms = _placed_line("夜へ、タワー", [[("よ", 1.0, 2.0), ("る", 1.1, 3.0)], [("へ", 1.2, 1.0)], [("た", 1.5, 2.0)], [("わ", 1.8, 0)]])
+    atoms[0]["time"] = None  # not placed: shown in hiragana, never split
+
+    out = to_hiragana(lines, atoms)
+
+    assert lines[0]["display"] == "よるへ、タワー"  # punctuation and katakana stay as written
+    assert [lines[0]["display"][u["offset"] : u["end"]] for u in out] == ["よる", "へ", "タ", "ワー"]
+
+
+def test_a_medium_chunk_can_start_inside_a_kanji():
+    from kizami.generate.text import to_hiragana
+
+    lines, atoms = _placed_line("願いを", [[("ね", 1.0, 2.0), ("が", 1.3, 3.8)], [("い", 1.6, 0.5)], [("を", 1.9, 1.0)]])
+    out = to_hiragana(lines, atoms)
+
+    chosen = select(out, "chu", m_thr=3.0)
+
+    assert [text for text, *_ in chunks_for(lines, chosen, out)[0]] == ["ね", "がいを"]
+    assert chunks_for(lines, chosen, out)[0][1][3] == [("が", 1.3, False), ("い", 1.6, False), ("を", 1.9, False)]
+
+
 # ---------------------------------------------------------- chunk start rules
 
 
@@ -355,6 +411,8 @@ def test_generate_reports_missing_inputs(tmp_path):
         generate(tmp_path, model_dir=tmp_path, mms="on")
     with pytest.raises(GenerateError, match="levels"):
         generate(tmp_path, model_dir=tmp_path, levels=["big"])
+    with pytest.raises(GenerateError, match="kanji"):
+        generate(tmp_path, model_dir=tmp_path, kanji="katakana")
 
 
 def test_vocabulary_without_a_blank_token_is_refused(tmp_path):
@@ -416,3 +474,11 @@ def test_cli_generate_needs_a_folder_and_a_model_folder(tmp_path, monkeypatch, c
     monkeypatch.setenv("KIZAMI_MODEL_DIR", str(tmp_path))
     assert main(["generate", str(tmp_path)]) == 2
     assert "vocal track not found" in capsys.readouterr().err
+
+
+def test_cli_generate_writes_medium_with_hiragana_by_default():
+    from kizami.cli import _build_parser
+
+    args = _build_parser().parse_args(["generate", "song"])
+
+    assert (args.level, args.kanji, args.anchor) == ("chu", "hiragana", "prev-end")

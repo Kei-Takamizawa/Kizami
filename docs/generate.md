@@ -1,8 +1,10 @@
 # Generating timing
 
-`kizami generate` turns a vocal track and its lyrics into chunk timing at
-three levels. Everything runs on your computer; nothing is downloaded while it
-runs.
+`kizami generate` turns a vocal track and its lyrics into chunk timing. A
+chunk starts at each word and at each strong vocal attack inside a word, and
+kanji are written in hiragana so that a chunk can also start inside one (the
+`が` of `願`). Everything runs on your computer; nothing is downloaded while
+it runs.
 
 ```
 kizami generate path/to/song-folder --model-dir path/to/models
@@ -46,7 +48,8 @@ The `ffmpeg` program must be installed to read the audio for the models.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--level` | `all` | `dai`, `chu`, `sho` or `all`. |
+| `--level` | `chu` | `chu` (the timing to use). `dai`, `sho` or `all` write the other two levels too, for comparison. |
+| `--kanji` | `hiragana` | `hiragana` writes kanji as their reading, one unit per mora. `keep` writes them as in `lyrics.txt`; a kanji then never splits. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
 | `--cache` | none | Folder for the model outputs. A rerun on the same audio then takes a few seconds. |
@@ -54,28 +57,28 @@ The `ffmpeg` program must be installed to read the audio for the models.
 
 ## Output
 
-For each level, a timing file (`auto_<level>.json`, see the
+A timing file (`auto_chu.json`, see the
 [timing JSON format](timing-json-format.md)) and an Audacity label file
-(`auto_labels_<level>.txt`) that `kizami tagger` and Audacity open. A chunk
+(`auto_labels_chu.txt`). Open the timing file in the tagger to review it with
+its lyric lines: `kizami tagger song-folder --labels auto_chu.json`. (The
+label file has no line breaks, and with kanji in hiragana its text no longer
+matches `lyrics.txt`, so the tagger would have to guess the lines.) A chunk
 with no clear attack of its own is `uncertain` in the JSON and starts with
 `?` in the label file. The command prints counts only, never lyric text.
 
 | Level | One chunk is |
 |---|---|
-| `dai` | a word with its particles, such as `夜空を` |
-| `chu` | `dai`, plus the strongest 45% of the attacks inside words |
-| `sho` | every character with a sound of its own; a kanji compound is split per kanji, and small kana, `っ`, `ー` and a drawn-out `う` join the character before |
+| `chu` | a word with its particles, plus the strongest 45% of the attacks inside words |
+| `dai` | a word with its particles, such as `夜空を` (with `--level dai` or `all`) |
+| `sho` | every unit with a sound of its own (with `--level sho` or `all`); small kana, `っ`, `ー` and a drawn-out `う` join the kana before |
 
-The same character has the same start time at every level.
+The same character has the same start time at every level, and with
+`--kanji hiragana` or `keep`. `kizami eval` compares files by their text, so
+compare against a reference written with kanji using `--kanji keep`.
 
 Each chunk with two or more morae also lists when every mora starts
-(`morae` in the JSON, not in the label files). This gives times inside a kanji
-that is never split, such as the が of `願`: the mora's aligned time snaps to
-an attack between the previous mora and the next unit, with the same
-start rule as a chunk. In a check on 1,075 pairs of neighbouring kana in the
-four songs, timed this way as if they were one unit, the second kana was
-within 50 ms of the owner's time as often as when timed as its own unit
-(91.8%). Times inside real kanji have no reference yet.
+(`morae` in the JSON, not in the label files), for players that highlight
+inside a chunk.
 
 ## How a chunk start is chosen
 
@@ -94,7 +97,18 @@ within 50 ms of the owner's time as often as when timed as its own unit
 4. **Start.** The chunk starts where the previous sound falls into the last
    valley before the attack. With no valley (an unbroken note change) it
    starts 20 ms before the attack; after more than 0.3 s of silence, where
-   the new sound rises.
+   the new sound rises. So the text appears a little before the attack
+   (about 0.1 s on average), which is where the owner placed starts by ear.
+5. **Morae inside a unit.** For a unit with two or more morae, such as `願`
+   (ね, が), each later mora is placed like a unit: its aligned time snaps to
+   an attack between the previous mora and the next unit, and it starts by
+   the rule of step 4.
+6. **Level chu.** A unit starts a chunk if it starts a word (particles stay
+   with the word before) or if its attack is among the strongest 45% of the
+   attacks inside words. With `--kanji hiragana` a unit with kanji is then
+   split into its morae, and a later mora also starts a chunk when its attack
+   is at least as strong as that 45% line. The line is set before the split,
+   so every other chunk start is the same as with `--kanji keep`.
 
 The parameters are in `kizami.generate.place.DEFAULTS`.
 
@@ -112,6 +126,18 @@ in the tagger. Recall is the share of reference chunk starts matched within
 
 Known weak spots: characters without an attack of their own (about half are
 within 50 ms), and fast runs where both models are a syllable late.
+
+**Chunks inside a kanji** (`--kanji hiragana`, measured 2026-11-19). All
+chunk starts outside kanji are the same as with `--kanji keep`, so the table
+above still holds for them. The split adds 27, 27, 39 and 12 chunk starts
+inside kanji to songs 1 to 4 (282 to 309 chunks for song 1). There is no
+reference for times inside a kanji. As a stand-in, two neighbouring kana of
+one word were timed as if they were one kanji with two morae: where the
+second kana had an attack as strong as the chu line, it was within 50 ms of
+the owner's time in 128 of 132 cases (97.0%, 95% interval 92.5 to 98.8%) over
+the four songs. Searching wider for a strong attack when a mora has none
+nearby was tried and not kept: the extra splits it found were right only half
+the time.
 
 ## From Python
 

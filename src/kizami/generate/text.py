@@ -76,6 +76,10 @@ def is_kanji(c: str) -> bool:
     return "㐀" <= c <= "鿿" or c in "々〆ヶ"
 
 
+def has_kanji(s: str) -> bool:
+    return any(is_kanji(c) for c in s)
+
+
 def furigana_atoms(surface: str, reading: str) -> list[tuple[int, int, str]] | None:
     """Split a short unit into kana characters and kanji runs with their readings."""
     s = kata_to_hira(surface)
@@ -187,8 +191,9 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
 
     Each unit is a dict: ``line``, ``offset`` and ``end`` in the display text,
     ``kana`` (the sung kana known to the aligner, ``*`` for one Latin
-    syllable), and the flags ``word_start``, ``dependent`` (particle or
-    auxiliary) and ``line_first``.
+    syllable), ``hiragana`` (the unit's text with its kanji written as their
+    reading, or None when it has no kanji), and the flags ``word_start``,
+    ``dependent`` (particle or auxiliary) and ``line_first``.
     """
     from sudachipy import dictionary, tokenizer
 
@@ -214,12 +219,12 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                 continue
             if surf.isascii():
                 n = max(1, len(re.findall(r"[aeiouy]+", surf.lower())))
-                units.append((b0, b0 + len(surf), ["*"] * n))
+                units.append((b0, b0 + len(surf), ["*"] * n, None))
                 continue
             reading = kata_to_hira(u.reading_form())
             parts = furigana_atoms(surf, reading)
             if parts is None:
-                units.append((b0, b0 + len(surf), kana_tokens(reading)))
+                units.append((b0, b0 + len(surf), kana_tokens(reading), reading if has_kanji(surf) else None))
                 continue
             for pa, pb, k in parts:
                 run = surf[pa:pb]
@@ -229,11 +234,11 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                     if guess:  # irregular reading (for example 今日): keep the compound whole
                         pieces_k = [(run, k)]
                     for j, (_, r) in enumerate(pieces_k):
-                        units.append((b0 + pa + j, b0 + pa + j + 1, kana_tokens(r)))
+                        units.append((b0 + pa + j, b0 + pa + j + 1, kana_tokens(r), r))
                     if len(pieces_k) == 1:
-                        units[-1] = (b0 + pa, b0 + pb, kana_tokens(k))
+                        units[-1] = (b0 + pa, b0 + pb, kana_tokens(k), k)
                 else:
-                    units.append((b0 + pa, b0 + pb, kana_tokens(k)))
+                    units.append((b0 + pa, b0 + pb, kana_tokens(k), k if has_kanji(run) else None))
         return units
 
     for li, line in enumerate(lines):
@@ -254,7 +259,9 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                         units += plain_units(tok.tokenize(line["display"][at : sp[0]], mode_a), at)
                     if sp not in done_spans:
                         done_spans.add(sp)
-                        units.append((sp[0], sp[1], kana_tokens(line["sung"][sp[2] : sp[3]])))
+                        sung = line["sung"][sp[2] : sp[3]]
+                        base = line["display"][sp[0] : sp[1]]
+                        units.append((sp[0], sp[1], kana_tokens(sung), sung if has_kanji(base) else None))
                     at = max(at, sp[1])
                 if at < m.end():
                     units += plain_units(tok.tokenize(line["display"][at : m.end()], mode_a), at)
@@ -263,7 +270,7 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
             flags = {"word_start": True, "dependent": pos in DEPENDENT_POS and not first, "line_first": first}
             first = False
             m_first = len(line_atoms)
-            for b, e, kana in units:
+            for b, e, kana, reading in units:
                 surf = kata_to_hira(line["display"][b:e])
                 long_u = (
                     surf == "う"
@@ -276,10 +283,66 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                     )
                 )
                 if (long_u or (len(surf) == 1 and surf in ATTACH)) and line_atoms and line_atoms[-1]["end"] == b:
-                    line_atoms[-1]["end"] = e  # no attack of its own: joins the unit before
-                    line_atoms[-1]["kana"] += kana
+                    prev = line_atoms[-1]  # no attack of its own: joins the unit before
+                    if prev["hiragana"] is not None or reading is not None:
+                        prev["hiragana"] = (prev["hiragana"] or line["display"][prev["offset"] : prev["end"]]) + (
+                            reading or line["display"][b:e]
+                        )
+                    prev["end"] = e
+                    prev["kana"] += kana
                     continue  # flags stay pending for the next unit of this word
-                line_atoms.append({"line": li, "offset": b, "end": e, "kana": kana, **flags})
+                line_atoms.append({"line": li, "offset": b, "end": e, "kana": kana, "hiragana": reading, **flags})
                 flags = {"word_start": False, "dependent": flags["dependent"], "line_first": False}
         atoms.extend(line_atoms)
     return atoms, guesses
+
+
+def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:
+    """Show kanji as their reading: new line texts, and units with a chunk start for every mora.
+
+    Call it after the units are placed (``time``, ``snapped``, ``strength``
+    and ``morae`` set). A unit with kanji becomes one unit per mora of its
+    reading, timed by its ``morae`` (the が of 願 gets its own unit, so a
+    chunk can start there). Every other unit, and the time of every first
+    mora, stays as it was. Each line's ``display`` is replaced by the new text
+    and the old text is kept as ``original``. Katakana and Latin letters stay
+    as written. Each returned unit has ``written``: where it starts in the
+    old text, or None for a later mora of a kanji reading.
+    """
+    out: list[dict] = []
+    by_line: dict[int, list[dict]] = {}
+    for a in atoms:
+        by_line.setdefault(a["line"], []).append(a)
+    for li, line in enumerate(lines):
+        old, shown, src = line["display"], "", 0
+        for a in by_line.get(li, []):
+            if a["offset"] >= src:
+                shown += old[src : a["offset"]]
+            src = max(src, a["end"])
+            text = a["hiragana"] if a.get("hiragana") is not None else old[a["offset"] : a["end"]]
+            morae = a.get("morae") or []
+            strengths = a.get("mora_strengths") or []
+            split = (
+                a.get("hiragana") is not None
+                and a.get("time") is not None
+                and len(morae) >= 2
+                and len(strengths) == len(morae)
+                and "".join(k for k, _, _ in morae) == text
+            )
+            if not split:
+                out.append(dict(a, offset=len(shown), end=len(shown) + len(text), written=a["offset"]))
+                shown += text
+                continue
+            for g, ((kana, t, has_attack), strength) in enumerate(zip(morae, strengths)):
+                unit = dict(a, offset=len(shown), end=len(shown) + len(kana), morae=[(kana, t, has_attack)])
+                if g == 0:
+                    unit["written"] = a["offset"]
+                else:
+                    unit.update(written=None, time=t, snapped=has_attack, strength=strength,
+                                word_start=False, line_first=False, why="mora")  # fmt: skip
+                unit["mora_strengths"] = [strength]
+                out.append(unit)
+                shown += kana
+        line["original"] = old
+        line["display"] = shown + old[src:]
+    return out
