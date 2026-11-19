@@ -17,6 +17,10 @@ EN_DIGRAPHS = {"th", "sh", "ch", "ph", "wh"}  # one sound: never split, go to th
 EN_KEEP_BEFORE = {"ck", "ng", "gh"}  # stay with the syllable before
 EN_BLENDS = {"bl", "br", "cl", "cr", "dr", "fl", "fr", "gl", "gr", "pl", "pr", "tr", "thr", "shr", "str", "spr", "scr", "spl"}
 EN_SUFFIXES = ("ness", "ment", "less", "ful", "ly")
+# Compounds that the spelling rules cut in the wrong place (so|me|day, an|yone, goodbye
+# as one): each of the two words is split on its own.
+EN_HEADS = ("some", "any", "every", "good", "life", "home")
+EN_TAILS = {"one", "body", "thing", "where", "day", "time", "times", "how", "way", "bye", "sick"}
 EN_EXCEPTIONS = {
     "eye": ["eye"],
     "eyes": ["eyes"],
@@ -99,6 +103,9 @@ def _english(word: str) -> list[str]:
             at += len(p)
             cuts.append(at)
         return _join(word, cuts)
+    for head in EN_HEADS:
+        if w.startswith(head) and w[len(head) :] in EN_TAILS:
+            return _english(word[: len(head)]) + _english(word[len(head) :])
     for suffix in EN_SUFFIXES:
         stem = len(w) - len(suffix)
         if w.endswith(suffix) and stem >= 3 and w[stem - 1] == "e" and _english_nuclei(w[:stem]):  # lone|ly, hope|less

@@ -26,6 +26,16 @@ from kizami.generate.syllables import latin_letters, links, syllables
         ("butterfly", ["but", "ter", "fly"]),
         ("hopeless", ["hope", "less"]),
         ("sadly", ["sad", "ly"]),
+        ("someday", ["some", "day"]),
+        ("somewhere", ["some", "where"]),
+        ("Sometime", ["Some", "time"]),
+        ("somehow", ["some", "how"]),
+        ("anyone", ["a", "ny", "one"]),
+        ("anyway", ["a", "ny", "way"]),
+        ("everyone", ["ev", "ery", "one"]),
+        ("goodbye", ["good", "bye"]),
+        ("lifetime", ["life", "time"]),
+        ("homesick", ["home", "sick"]),
     ],
 )
 def test_english_syllables(word, parts):
