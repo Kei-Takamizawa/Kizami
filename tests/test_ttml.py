@@ -259,3 +259,37 @@ def test_cli_reports_a_bad_input(tmp_path, capsys):
 def _sec(value):
     h, m, s = value.split(":")
     return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+def _english(meta):
+    chunks = [Chunk("beau", 0), Chunk("ti", 200), Chunk("ful ", 400), Chunk("ba", 600), Chunk("by", 800, 900)]
+    return TimingDocument(lines=(Line(chunks=tuple(chunks)),), meta=meta)
+
+
+def test_no_space_inside_an_english_word_when_chunk_spaces_are_off():
+    text = document_to_ttml(_english({"source": "kizami generate"}), chunk_spaces=False)
+    assert line_texts(text) == ["beautiful baby"]
+
+
+def test_space_after_every_chunk_when_chunk_spaces_are_on():
+    text = document_to_ttml(_english({"source": "kizami generate"}))
+    assert line_texts(text) == ["beau ti ful ba by"]
+
+
+def test_a_tagger_file_with_written_spaces_keeps_words_whole():
+    text = document_to_ttml(_english({"source": "kizami tagger"}), chunk_spaces=False)
+    assert line_texts(text) == ["beautiful baby"]
+
+
+def test_lang_comes_from_the_document():
+    doc = doc_of(([Chunk("사", 0), Chunk("랑", 200, 300)], None))
+    ko = TimingDocument(lines=doc.lines, meta={"languages": {"en": 4, "ko": 9}})
+    assert 'xml:lang="ko"' in document_to_ttml(ko)
+    assert 'xml:lang="en"' in document_to_ttml(ko, lang="en")
+    assert 'xml:lang="ja"' in document_to_ttml(doc)
+
+
+def test_cli_ttml_lang_defaults_to_the_document():
+    from kizami.cli import _build_parser
+
+    assert _build_parser().parse_args(["ttml", "x.json"]).lang is None

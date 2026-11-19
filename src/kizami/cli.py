@@ -193,7 +193,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ttml.add_argument("--title", help="song title to store in the file")
     ttml.add_argument("--artist", action="append", default=[], help="artist to store in the file (repeat for more)")
     ttml.add_argument("--album", help="album to store in the file")
-    ttml.add_argument("--lang", default="ja", help="language code of the lyrics (default ja)")
+    ttml.add_argument("--lang", default=None, help="language code of the lyrics (default: the main language of the timing file, else ja)")
 
     app = commands.add_parser(
         "app",
