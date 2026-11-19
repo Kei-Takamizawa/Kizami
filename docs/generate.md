@@ -45,7 +45,12 @@ with a vowel after a word that ends with one (`mi amor`, sung `mia-mor`) does
 not start a chunk of its own unless its vowel has a strong attack.
 
 Japanese parts are timed by the Japanese model, all other parts by the letter
-model. A line with Japanese only is timed exactly as before.
+model. A line with Japanese only gets the same chunks as before, and the same
+times, except one case: the first start of a line right after a line with
+Latin text can move, because it starts where the sound of the line before
+ends. Measured 2026-11-19 on the four Japanese test songs at the medium level:
+2 of 1,052 starts on Japanese-only lines moved, and both moved closer to the
+owner's times.
 
 ## Models
 
