@@ -81,9 +81,132 @@ def _units(display, tmp_path=None):
     else:
         (tmp_path / "lyrics.txt").write_text(display + "\n", encoding="utf-8")
         lines = parse_lyrics(tmp_path / "lyrics.txt")
-    atoms, kept_whole = atoms_for(lines, _vocab())
+    atoms, kept_whole, *_ = atoms_for(lines, _vocab())
     shown = lines[0]["display"]
     return [(shown[a["offset"] : a["end"]], "".join(a["kana"])) for a in atoms], atoms, kept_whole
+
+
+def _atoms(*texts, latin="auto"):
+    """Units of several lines (no readings), the Latin language used, and the lines."""
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from kizami.generate.text import atoms_for
+
+    lines = [{"display": t, "sung": t, "spans": []} for t in texts]
+    atoms, _, used = atoms_for(lines, _vocab(), latin=latin)
+    return atoms, used, lines
+
+
+def _shown(atoms, lines):
+    return [lines[a["line"]]["display"][a["offset"] : a["end"]] for a in atoms]
+
+
+GOLDEN_KEYS = ("line", "offset", "end", "kana", "hiragana", "word_start", "dependent", "line_first")
+
+
+def test_japanese_units_match_the_golden_file(tmp_path):
+    """Units of Japanese-only lines are exactly what the Japanese-only code gave (tests/data)."""
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from pathlib import Path
+
+    from kizami.generate.text import atoms_for
+
+    golden = json.loads((Path(__file__).parent / "data" / "ja_units_golden.json").read_text(encoding="utf-8"))
+    (tmp_path / "lyrics.txt").write_text("\n".join(golden["lines"]) + "\n", encoding="utf-8")
+    atoms, kept, _ = atoms_for(parse_lyrics(tmp_path / "lyrics.txt"), _vocab())
+    assert kept == golden["kept_whole"]
+    assert [[a[k] for k in GOLDEN_KEYS] for a in atoms] == golden["units"]
+
+
+def test_japanese_line_is_the_same_next_to_other_languages():
+    alone, _, _ = _atoms("夜空に星が光る")
+    mixed, _, _ = _atoms("夜空に星が光る", "I love you baby", "사랑해 너를")
+    keys = ("offset", "end", "kana", "hiragana", "word_start", "dependent", "line_first")
+    assert [[a[k] for k in keys] for a in mixed if a["line"] == 0] == [[a[k] for k in keys] for a in alone]
+
+
+def test_korean_units_are_blocks_and_words_start_after_spaces():
+    atoms, _, lines = _atoms("사랑해 너를")
+    assert _shown(atoms, lines) == ["사", "랑", "해", "너", "를"]
+    assert [a["syllable"] for a in atoms] == ["사", "랑", "해", "너", "를"]
+    assert [a["word_start"] for a in atoms] == [True, False, False, True, False]
+    assert [a["letters"] for a in atoms] == ["sa", "rang", "hae", "neo", "reul"]
+    assert {a["lang"] for a in atoms} == {"ko"}
+    assert all(a["kana"] == ["*"] and a["hiragana"] is None and not a["dependent"] for a in atoms)
+    assert [a["line_first"] for a in atoms] == [True, False, False, False, False]
+
+
+def test_english_units_are_syllables():
+    atoms, used, lines = _atoms("beautiful baby")
+    assert used == "en"
+    assert _shown(atoms, lines) == ["beau", "ti", "ful", "ba", "by"]
+    assert [a["word_start"] for a in atoms] == [True, False, False, True, False]
+    assert [a["letters"] for a in atoms] == ["beau", "ti", "ful", "ba", "by"]
+
+
+def test_spanish_sinalefa_joins_the_next_word():
+    atoms, used, lines = _atoms("mi amor")
+    assert used == "es"
+    assert _shown(atoms, lines) == ["mi", "a", "mor"]
+    assert [a["word_start"] for a in atoms] == [True, False, False]
+    assert {a["lang"] for a in atoms} == {"es"}
+
+
+def test_no_sinalefa_in_english():
+    atoms, _, _ = _atoms("my eyes", latin="en")
+    assert [a["word_start"] for a in atoms] == [True, True]
+
+
+def test_mixed_line_without_spaces():
+    atoms, _, lines = _atoms("Baby사랑해")
+    assert _shown(atoms, lines) == ["Ba", "by", "사", "랑", "해"]
+    assert [a["word_start"] for a in atoms] == [True, False, True, False, False]
+    assert [a["lang"] for a in atoms] == ["en", "en", "ko", "ko", "ko"]
+
+
+def test_english_word_inside_a_japanese_line():
+    atoms, _, lines = _atoms("君のsmileが好き")
+    shown = _shown(atoms, lines)
+    assert "smile" in shown
+    smile = atoms[shown.index("smile")]
+    assert smile["lang"] == "en" and smile["word_start"] and smile["letters"] == "smile"
+    assert [a["lang"] for a in atoms if a["lang"] == "ja"] and atoms[0]["line_first"]
+
+
+def test_latin_guess_is_returned():
+    assert _atoms("te quiero mi amor")[1] == "es"
+    assert _atoms("te quiero mi amor", latin="en")[1] == "en"
+    assert {a["lang"] for a in _atoms("te quiero", latin="en")[0]} == {"en"}
+
+
+def test_japanese_units_carry_romaji_letters():
+    from kizami.generate.letters import romaji
+
+    atoms, _, _ = _atoms("青空を駆ける")
+    assert all(a["lang"] == "ja" and a["letters"] == romaji(a["kana"]) for a in atoms)
+
+
+def test_apostrophes_and_hyphens_stay_inside_a_word():
+    atoms, _, lines = _atoms("don't stop 'cause rock-n-roll", latin="en")
+    assert _shown(atoms, lines) == ["don't", "stop", "'cause", "rock-", "n-", "roll"]
+    assert [a["word_start"] for a in atoms] == [True, True, True, True, False, False]
+    assert atoms[0]["letters"] == "don't" and atoms[2]["letters"] == "'cause"
+
+
+def test_a_word_without_vowels_is_one_unit():
+    atoms, _, lines = _atoms("hmm shh", latin="en")
+    assert _shown(atoms, lines) == ["hmm", "shh"]
+    assert [a["letters"] for a in atoms] == ["hmm", "shh"]
+
+
+def test_uppercase_accented_and_full_width_letters():
+    atoms, _, lines = _atoms("CORAZÓN", latin="es")
+    assert _shown(atoms, lines) == ["CO", "RA", "ZÓN"]
+    assert [a["letters"] for a in atoms] == ["co", "ra", "zon"]
+    atoms, _, lines = _atoms("ＬＯＶＥ", latin="en")
+    assert _shown(atoms, lines) == ["ＬＯＶＥ"]
+    assert [a["letters"] for a in atoms] == ["love"]
 
 
 def test_kanji_compound_is_split_per_kanji_with_its_reading():
@@ -576,3 +699,16 @@ def test_cli_generate_writes_medium_with_kanji_auto_by_default():
     args = _build_parser().parse_args(["generate", "song"])
 
     assert (args.level, args.kanji, args.anchor) == ("chu", "auto", "prev-end")
+
+
+def test_a_given_reading_in_english_is_one_unit_with_the_sung_letters(tmp_path):
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from kizami.generate.text import atoms_for
+
+    (tmp_path / "lyrics.txt").write_text("call me {24/7|twenty four seven} baby\n", encoding="utf-8")
+    lines = parse_lyrics(tmp_path / "lyrics.txt")
+    atoms, _, used = atoms_for(lines, _vocab(), latin="en")
+    shown = [lines[0]["display"][a["offset"] : a["end"]] for a in atoms]
+    assert shown == ["call", "me", "24/7", "ba", "by"]
+    assert atoms[2]["letters"] == "twentyfourseven" and atoms[2]["word_start"]

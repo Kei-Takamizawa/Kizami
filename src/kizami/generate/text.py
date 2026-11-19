@@ -19,6 +19,11 @@ import re
 import unicodedata
 from pathlib import Path
 
+from kizami.generate.hangul import word_letters
+from kizami.generate.lang import guess_latin, runs_of, script_of
+from kizami.generate.letters import romaji
+from kizami.generate.syllables import latin_letters, links, syllables
+
 TAG = re.compile(r"^\[[^\]]+\]$")
 OVERRIDE = re.compile(r"\{([^{}|]+)\|([^{}]+)\}|([㐀-鿿々〆ヶ]+)\{([^{}|]+)\}")
 DEPENDENT_POS = {"助詞", "助動詞", "接尾辞"}
@@ -186,14 +191,51 @@ def split_kanji_reading(tok, run: str, reading: str) -> tuple[list[tuple[str, st
     return list(zip(run, got[1])), guess
 
 
-def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
-    """Timing units for all lines, and how many kanji compounds were kept whole.
+def _line_scripts(line: dict) -> list[str]:
+    """The script of each display character; inside a given reading, the script of the reading."""
+    scripts = [script_of(c) for c in line["display"]]
+    for d0, d1, s0, s1 in line["spans"]:
+        sung = [script_of(c) for c in line["sung"][s0:s1]]
+        sung_script = next((x for x in sung if x), "ja")
+        scripts[d0:d1] = [sung_script] * (d1 - d0)
+    return scripts
+
+
+WORD_INNER = set("'\u2019-")
+
+
+def _words(text: str, start: int, stop: int, script: str, scripts: list[str]) -> list[tuple[int, int]]:
+    """``(start, end)`` of each word in ``text[start:stop]``: letters of ``script``, with ``'`` or ``-``
+    between letters (and a leading ``'``) kept inside."""
+    out, i = [], start
+    while i < stop:
+        if scripts[i] != script and not (text[i] in "'\u2019" and i + 1 < stop and scripts[i + 1] == script):
+            i += 1
+            continue
+        j = i + 1
+        while j < stop and (scripts[j] == script or (text[j] in WORD_INNER and j + 1 < stop and scripts[j + 1] == script)):
+            j += 1
+        out.append((i, j))
+        i = j
+    return out
+
+
+def atoms_for(lines: list[dict], vocab: dict, latin: str = "auto") -> tuple[list[dict], int, str]:
+    """Timing units for all lines, how many kanji compounds were kept whole, and the Latin language.
 
     Each unit is a dict: ``line``, ``offset`` and ``end`` in the display text,
-    ``kana`` (the sung kana known to the aligner, ``*`` for one Latin
-    syllable), ``hiragana`` (the unit's text with its kanji written as their
-    reading, or None when it has no kanji), and the flags ``word_start``,
-    ``dependent`` (particle or auxiliary) and ``line_first``.
+    ``kana`` (the sung kana known to the kana model, ``*`` for a unit in
+    another language), ``hiragana`` (the unit's text with its kanji written as
+    their reading, or None when it has no kanji), the flags ``word_start``,
+    ``dependent`` (Japanese particle or auxiliary) and ``line_first``,
+    ``lang`` (``ja``, ``ko``, ``en`` or ``es``) and ``letters`` (for the MMS
+    letter model). A unit in another language than Japanese also has
+    ``syllable``, its written text.
+
+    Japanese is split with SudachiPy, Korean per Hangul block, English and
+    Spanish per syllable. ``latin`` is ``"en"``, ``"es"`` or ``"auto"`` (guess
+    from all Latin words of the song); every Latin word of the song is taken
+    to be in that one language.
     """
     from sudachipy import dictionary, tokenizer
 
@@ -241,8 +283,9 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                     units.append((b0 + pa, b0 + pb, kana_tokens(k), k if has_kanji(run) else None))
         return units
 
-    for li, line in enumerate(lines):
-        line_atoms, first, done_spans = [], True, set()
+    def japanese_units(li, line, first):
+        """Units of a line (or of a part of one, given as its own line) by today's Japanese rules."""
+        line_atoms, done_spans = [], set()
         for m in tok.tokenize(line["display"], mode_c):
             pos = m.part_of_speech()[0]
             if pos in SKIP_POS or not norm_char(m.surface()[:1] or " "):
@@ -293,8 +336,71 @@ def atoms_for(lines: list[dict], vocab: dict) -> tuple[list[dict], int]:
                     continue  # flags stay pending for the next unit of this word
                 line_atoms.append({"line": li, "offset": b, "end": e, "kana": kana, "hiragana": reading, **flags})
                 flags = {"word_start": False, "dependent": flags["dependent"], "line_first": False}
+        for a in line_atoms:
+            a["lang"], a["letters"] = "ja", romaji(a["kana"])
+        return line_atoms
+
+    scripts_of = [_line_scripts(line) for line in lines]
+    runs_of_line = [runs_of(sc) for sc in scripts_of]
+    if latin == "auto":
+        latin_words = [
+            line["display"][a:b]
+            for line, sc, runs in zip(lines, scripts_of, runs_of_line)
+            for start, stop, script in runs
+            if script == "latin"
+            for a, b in _words(line["display"], start, stop, "latin", sc)
+        ]
+        latin = guess_latin(latin_words)
+
+    for li, line in enumerate(lines):
+        runs = runs_of_line[li]
+        if all(script == "ja" for _, _, script in runs):
+            atoms.extend(japanese_units(li, line, True))  # today's path, the whole line
+            continue
+        line_atoms, prev_word = [], None
+        for start, stop, script in runs:
+            first = not line_atoms
+            if script == "ja":
+                part = {
+                    "display": line["display"][start:stop],
+                    "sung": line["sung"],
+                    "spans": [(d0 - start, d1 - start, s0, s1) for d0, d1, s0, s1 in line["spans"] if start <= d0 and d1 <= stop],
+                }
+                for a in japanese_units(li, part, first):
+                    a["offset"] += start
+                    a["end"] += start
+                    line_atoms.append(a)
+                prev_word = None
+                continue
+            lang = "ko" if script == "ko" else latin
+            for w0, w1 in _words(line["display"], start, stop, script, scripts_of[li]):
+                word = line["display"][w0:w1]
+                span = next((sp for sp in line["spans"] if sp[0] <= w0 and w1 <= sp[1]), None)
+                if span is not None:  # a given reading: one unit for the whole written part
+                    if any(a["offset"] == span[0] for a in line_atoms):
+                        continue
+                    sung = line["sung"][span[2] : span[3]]
+                    pieces = [(span[0], span[1], "".join(word_letters(sung)) if lang == "ko" else latin_letters(sung))]
+                elif lang == "ko":
+                    pieces = [(w0 + i, w0 + i + 1, letters) for i, letters in enumerate(word_letters(word))]
+                else:
+                    pieces, at = [], w0
+                    for syl in syllables(word, lang):
+                        pieces.append((at, at + len(syl), latin_letters(syl)))
+                        at += len(syl)
+                linked = lang == "es" and prev_word is not None and links(prev_word, word)
+                for k, (b, e, letters) in enumerate(pieces):
+                    line_atoms.append(
+                        {
+                            "line": li, "offset": b, "end": e, "kana": ["*"], "hiragana": None,
+                            "word_start": k == 0 and not linked, "dependent": False,
+                            "line_first": not line_atoms, "lang": lang, "letters": letters,
+                            "syllable": line["display"][b:e],
+                        }
+                    )  # fmt: skip
+                prev_word = word
         atoms.extend(line_atoms)
-    return atoms, guesses
+    return atoms, guesses, latin
 
 
 def to_hiragana(lines: list[dict], atoms: list[dict]) -> list[dict]:

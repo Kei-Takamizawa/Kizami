@@ -172,7 +172,7 @@ def generate(
         lines = text.parse_lyrics(lyrics_path)
     except UnicodeDecodeError as exc:
         raise GenerateError(f"{lyrics_path}: not UTF-8 text ({exc})") from exc
-    atoms, kanji_whole = text.atoms_for(lines, vocab)
+    atoms, kanji_whole, latin_used = text.atoms_for(lines, vocab)
     if not any(a["kana"] for a in atoms):
         raise GenerateError(f"{lyrics_path}: no singable lyrics found")
 

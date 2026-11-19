@@ -54,9 +54,13 @@ def script_runs(text: str) -> list[tuple[int, int, str]]:
     letters of the same script belong to the run; at a change of script, or
     at either end of the text, they belong to no run.
     """
+    return runs_of([script_of(c) for c in text])
+
+
+def runs_of(scripts: list[str]) -> list[tuple[int, int, str]]:
+    """``script_runs`` for a list with the script of each character (``""`` for none)."""
     runs: list[list] = []
-    for i, c in enumerate(text):
-        s = script_of(c)
+    for i, s in enumerate(scripts):
         if not s:
             continue
         if runs and runs[-1][2] == s:
