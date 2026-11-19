@@ -69,9 +69,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "hiragana: show every kanji in hiragana; keep: show kanji as written, a kanji never splits",
     )
     gen.add_argument(
+        "--latin",
+        default="auto",
+        choices=["auto", "en", "es"],
+        help="language of lyrics in Latin letters: auto (default, guessed from the words), en or es",
+    )
+    gen.add_argument(
         "--model-dir",
         default=os.environ.get(MODEL_DIR_ENV),
-        help=f"folder with w2v2-hiragana/ and optionally mms_fa/model.pt (default ${MODEL_DIR_ENV})",
+        help=f"folder with w2v2-hiragana/ (Japanese) and mms_fa/model.pt (Korean, English, Spanish; "
+        f"optional for Japanese) (default ${MODEL_DIR_ENV})",
     )
     gen.add_argument(
         "--mms",
@@ -379,6 +386,7 @@ def _run_generate(args: argparse.Namespace) -> None:
             out_dir=args.out_dir,
             levels=LEVELS if args.level == "all" else (args.level,),
             kanji=args.kanji,
+            latin=args.latin,
             mms=args.mms,
             cache=args.cache,
             params={"anchor": args.anchor},
@@ -393,6 +401,10 @@ def _run_generate(args: argparse.Namespace) -> None:
         f"{result.kanji_kept_whole} kanji compounds timed as one unit"
     )
     print("chunk start rule: " + ", ".join(f"{k} {v}" for k, v in result.start_rules.items()))
+    if result.languages:
+        names = ", ".join(f"{k} {v}" for k, v in result.languages.items())
+        latin = f" (Latin letters read as {result.latin})" if result.languages.get(result.latin) else ""
+        print(f"units per language: {names}{latin}")
     for lv in result.levels:
         shown = f", {lv.kanji_in_hiragana} kanji words in hiragana" if args.kanji == "auto" else ""
         print(f"{lv.level}: {lv.chunks} chunks ({lv.uncertain} uncertain{shown}) -> {lv.timing}, {lv.labels}")

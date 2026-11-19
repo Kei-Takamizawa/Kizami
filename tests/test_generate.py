@@ -808,3 +808,53 @@ def test_not_sibilant_from_letters(lang, letters):
     from kizami.generate.place import is_sibilant
 
     assert not is_sibilant(_lang_atom(1.0, lang, letters))
+
+
+def _with_kana_model(tmp_path):
+    model = tmp_path / "w2v2-hiragana"
+    model.mkdir()
+    (model / "vocab.json").write_text(json.dumps(_vocab()), encoding="utf-8")
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"")
+
+
+def test_latin_must_be_auto_english_or_spanish(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("あ\n", encoding="utf-8")
+    with pytest.raises(GenerateError, match="latin"):
+        generate(tmp_path, model_dir=tmp_path, latin="fr")
+
+
+def test_a_korean_song_needs_the_letter_model_and_not_the_kana_model(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("사랑해\n", encoding="utf-8")
+    with pytest.raises(GenerateError, match="mms_fa/model.pt") as err:
+        generate(tmp_path, model_dir=tmp_path)
+    assert "kana model" not in str(err.value)
+
+
+def test_the_letter_model_cannot_be_turned_off_for_other_languages(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("あ\nI love you\n", encoding="utf-8")
+    _with_kana_model(tmp_path)
+    with pytest.raises(GenerateError, match="letter model"):
+        generate(tmp_path, model_dir=tmp_path, mms="off")
+
+
+def test_languages_and_latin_are_written_to_the_timing_file(tmp_path):
+    from kizami.generate import _write_level
+    from kizami.timing import load_document
+
+    lines, atoms = _timed("ab", [(0, 1.0, True, 5.0, True, False)])
+    _write_level(tmp_path, "chu", lines, atoms, dict(DEFAULTS), meta_extra={"languages": {"ko": 3, "en": 1}, "latin": "en"})
+    meta = load_document(tmp_path / "auto_chu.json").meta
+    assert meta["languages"] == {"ko": 3, "en": 1} and meta["latin"] == "en"
+
+
+def test_cli_generate_takes_the_latin_language():
+    from kizami.cli import _build_parser
+
+    assert _build_parser().parse_args(["generate", "song"]).latin == "auto"
+    assert _build_parser().parse_args(["generate", "song", "--latin", "es"]).latin == "es"
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["generate", "song", "--latin", "fr"])

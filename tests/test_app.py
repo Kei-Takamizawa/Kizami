@@ -235,6 +235,7 @@ def test_a_job_needs_lyrics_and_a_received_song(running):
     assert status == 409
     assert b"not received" in data
     assert start(port, app.token, upload=upload(port, app.token), offset_ms=99999)[0] == 409
+    assert start(port, app.token, upload=upload(port, app.token), latin="fr")[0] == 409
 
 
 def test_one_song_at_a_time(tmp_path):
@@ -302,10 +303,11 @@ def fakes(monkeypatch):
         calls["convert"] += 1
         write_tone(out)
 
-    def generate(folder, *, model_dir, cache, progress):
+    def generate(folder, *, model_dir, cache, progress, latin="auto"):
         from kizami.generate import GenerateResult, LevelResult
 
         calls["generate"] += 1
+        calls["latin"] = latin
         progress("aligning the lyrics (kana model)")
         doc = TimingDocument(lines=(Line(chunks=(Chunk("あ", 500), Chunk("い", 1500, uncertain=True))),))
         save_document(doc, Path(folder) / "auto_chu.json")
@@ -322,12 +324,19 @@ def fakes(monkeypatch):
     return calls
 
 
-def _job(app, name="song.m4a", data=b"abc", lyrics="あい\n", is_vocals=False):
+def _job(app, name="song.m4a", data=b"abc", lyrics="あい\n", is_vocals=False, latin="auto"):
     upload_id = app.save_upload(name, _Stream(data), len(data))
     up = app.uploads.pop(upload_id)
     job = Job(id="j" * 12, name=safe_name(name))
-    run_pipeline(job, up, {"lyrics": lyrics, "is_vocals": is_vocals}, app)
+    run_pipeline(job, up, {"lyrics": lyrics, "is_vocals": is_vocals, "latin": latin}, app)
     return job
+
+
+def test_pipeline_passes_the_latin_language(tmp_path, fakes):
+    app = App(tmp_path / "work", tmp_path / "models")
+    _job(app, lyrics="te quiero\n", latin="es")
+    assert fakes["latin"] == "es"
+    app.close()
 
 
 def test_pipeline_separates_once_per_song_and_writes_the_files(tmp_path, fakes):
