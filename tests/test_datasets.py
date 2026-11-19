@@ -106,6 +106,8 @@ def test_cli_import_ref_jamendo_needs_the_word_list(tmp_path):
         ("lag_en=-0.06:-0.02:0.02", "lag_en", [-0.06, -0.04, -0.02]),
         ("m_share=0.45", "m_share", [0.45]),
         ("lag_ko=0,0.01", "lag_ko", [0.0, 0.01]),
+        ("m_share=0:0.8:0.3", "m_share", [0.0, 0.3, 0.6]),
+        ("lag_en=-0.06:0.04:0.01", "lag_en", [round(-0.06 + i * 0.01, 6) for i in range(11)]),
     ],
 )
 def test_parse_param(text, name, values):

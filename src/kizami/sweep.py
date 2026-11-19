@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import math
 import tempfile
 from pathlib import Path
 
@@ -28,7 +29,7 @@ def parse_param(text: str) -> tuple[str, list[float]]:
         start, stop, step = (float(x) for x in spec.split(":"))
         if step <= 0:
             raise ValueError("the step must be above 0")
-        n = int(round((stop - start) / step))
+        n = int(math.floor((stop - start) / step + 1e-9))  # never past stop
         return name, [round(start + i * step, 6) for i in range(n + 1)]
     return name, [float(x) for x in spec.split(",") if x.strip()]
 
