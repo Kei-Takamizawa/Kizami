@@ -11,6 +11,7 @@ from kizami.generate.audio import envelope, hiss_start  # noqa: E402
 from kizami.generate.place import (  # noqa: E402
     DEFAULTS,
     chu_threshold,
+    chu_thresholds,
     chunks_for,
     fused_rough,
     mora_groups,
@@ -712,3 +713,98 @@ def test_a_given_reading_in_english_is_one_unit_with_the_sung_letters(tmp_path):
     shown = [lines[0]["display"][a["offset"] : a["end"]] for a in atoms]
     assert shown == ["call", "me", "24/7", "ba", "by"]
     assert atoms[2]["letters"] == "twentyfourseven" and atoms[2]["word_start"]
+
+
+def _lang_atom(rough, lang, letters, **flags):
+    a = _atom(rough, "*" if lang != "ja" else flags.pop("kana", "か"), **flags)
+    a.update(lang=lang, letters=letters, syllable=letters)
+    return a
+
+
+def test_mms_letters_come_from_the_units():
+    from kizami.generate.align import mms_tokens
+
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "ko", "sa"), _lang_atom(3.0, "en", "don't")]
+    letters, owner = mms_tokens(atoms)
+    assert "".join(letters) == "kasadon't"
+    assert owner == [0, 0, 1, 1, 2, 2, 2, 2, 2]
+
+
+def test_units_without_letters_fall_back_to_romaji():
+    from kizami.generate.align import mms_tokens
+
+    letters, owner = mms_tokens([_atom(1.0, "か")])  # a unit from before units had letters
+    assert letters == ["k", "a"] and owner == [0, 0]
+
+
+def test_non_japanese_units_take_the_mms_time():
+    from kizami.generate.align import adopt_mms
+
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(9.0, "en", "love"), _lang_atom(None, "ko", "sa")]
+    for a, (m, last) in zip(atoms, ((1.1, 1.1), (2.0, 2.1), (3.0, 3.2))):
+        a.update(mms=m, mms_last=last, mms_conf=0.4)
+    assert adopt_mms(atoms) == 2
+    assert atoms[0]["rough"] == 1.0  # Japanese keeps the kana model's time
+    assert (atoms[1]["rough"], atoms[1]["rough_last"], atoms[1]["conf"]) == (2.0, 2.1, 0.4)
+    assert atoms[2]["rough"] == 3.0 and atoms[2]["kana_starts"] == [3.0]
+
+
+def test_fusion_offset_uses_japanese_units_only():
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "ja", "ka"), _lang_atom(3.5, "ja", "ka")]
+    for a, m in zip(atoms, (1.0, 2.0, 3.0)):
+        a["mms"], a["mms_conf"] = m, 0.3
+    others = [_lang_atom(t, "en", "la") for t in (5.0, 6.0, 7.0, 8.0)]
+    for a in others:
+        a["mms"], a["mms_conf"] = a["rough"] - 0.5, 0.3  # would move the median offset if counted
+    onsets, strengths = np.array([0.98, 1.98, 2.98]), np.array([4.0, 4.0, 4.0])
+    atoms[2]["conf"] = 0.001
+    out, n = fused_rough(atoms + others, DEFAULTS, onsets, strengths)
+    assert n == 1 and out[2] == (3.0, 3.0)
+    assert out[3:] == [(a["rough"], a["rough_last"]) for a in others]
+
+
+def test_lag_is_read_per_language():
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "en", "la")]
+    onsets, strengths = [0.95, 1.95], [5.0, 5.0]
+    p = dict(DEFAULTS, lag=0.0, lag_en=-0.05, before=0.01, after=0.01)
+    place(atoms, onsets, strengths, p, np.zeros(1000, bool), 200.0)
+    assert not atoms[0]["snapped"]  # 50 ms away from the Japanese search centre
+    assert atoms[1]["snapped"] and atoms[1]["time"] == pytest.approx(1.95)
+
+
+def test_threshold_per_language_keeps_japanese():
+    ja = [dict(_lang_atom(1.0, "ja", "ka", word_start=False), snapped=True, strength=float(s)) for s in range(1, 11)]
+    en = [dict(_lang_atom(1.0, "en", "la", word_start=False), snapped=True, strength=100.0) for _ in range(10)]
+    t = chu_thresholds(ja + en, 0.45)
+    assert t["ja"] == pytest.approx(chu_threshold(ja, 0.45))
+    assert t["en"] == pytest.approx(100.0)
+
+
+def test_select_uses_the_unit_language_threshold():
+    lines, atoms = _timed("ab", [(0, 1.0, True, 5.0, True, False), (1, 2.0, True, 5.0, False, False)])
+    atoms[1]["lang"] = "en"
+    assert len(select(atoms, "chu", {"ja": 1.0, "en": 9.0})) == 1
+    assert len(select(atoms, "chu", {"ja": 9.0, "en": 1.0})) == 2
+    assert len(select(atoms, "chu", 1.0)) == 2  # one number still works
+
+
+def test_non_japanese_units_list_their_syllable_as_one_mora():
+    atoms = [_lang_atom(1.0, "en", "beau")]
+    atoms[0]["syllable"] = "beau"
+    place(atoms, [0.98], [5.0], dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+    place_morae(atoms, [0.98], [5.0], dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+    assert atoms[0]["morae"] == [("beau", atoms[0]["time"], True)]
+
+
+@pytest.mark.parametrize("lang, letters", [("en", "so"), ("es", "si"), ("ko", "sa"), ("en", "shy"), ("es", "cielo"), ("ko", "jo")])
+def test_sibilant_from_letters(lang, letters):
+    from kizami.generate.place import is_sibilant
+
+    assert is_sibilant(_lang_atom(1.0, lang, letters))
+
+
+@pytest.mark.parametrize("lang, letters", [("en", "love"), ("es", "casa"), ("ko", "na"), ("en", "jump")])
+def test_not_sibilant_from_letters(lang, letters):
+    from kizami.generate.place import is_sibilant
+
+    assert not is_sibilant(_lang_atom(1.0, lang, letters))

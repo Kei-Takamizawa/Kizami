@@ -137,20 +137,35 @@ def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None) 
     return em
 
 
+def mms_tokens(atoms: list[dict]) -> tuple[list[str], list[int]]:
+    """The MMS letters of all units in order, and the index of the unit each letter belongs to.
+
+    A unit's letters are its ``letters`` (set for every language by
+    ``text.atoms_for``), or the romaji of its kana for a unit without them.
+    """
+    letters, owner = [], []
+    for ai, a in enumerate(atoms):
+        word = a.get("letters")
+        if word is None:
+            word = romaji(a["kana"])
+        for ch in word:
+            letters.append(ch)
+            owner.append(ai)
+    return letters, owner
+
+
 def mms_align(em: np.ndarray, atoms: list[dict]) -> None:
-    """Set ``mms`` (start of the first letter) and ``mms_conf`` on each unit; None where it has no letters."""
+    """Set ``mms`` (start of the first letter), ``mms_last`` (start of the last letter) and
+    ``mms_conf`` on each unit; None where it has no letters."""
     import torch
     import torchaudio
     import torchaudio.functional as F
 
     d = torchaudio.pipelines.MMS_FA.get_dict(star="*")
-    ids, owner = [], []
-    for ai, a in enumerate(atoms):
-        for ch in romaji(a["kana"]):
-            ids.append(d[ch])
-            owner.append(ai)
+    letters, owner = mms_tokens(atoms)
+    ids = [d[ch] for ch in letters]
     for a in atoms:
-        a["mms"], a["mms_conf"] = None, 0.0
+        a["mms"], a["mms_last"], a["mms_conf"] = None, None, 0.0
     if not ids:
         return
     aligned, scores = F.forced_align(torch.from_numpy(em)[None], torch.tensor([ids], dtype=torch.int32), blank=0)
@@ -161,6 +176,25 @@ def mms_align(em: np.ndarray, atoms: list[dict]) -> None:
     for sp, ai in zip(spans, owner):
         if atoms[ai]["mms"] is None:
             atoms[ai]["mms"] = sp.start * STRIDE / SR
+        atoms[ai]["mms_last"] = sp.start * STRIDE / SR
         conf[ai] = min(conf.get(ai, 1.0), float(sp.score))  # weakest letter of the unit
     for ai, c in conf.items():
         atoms[ai]["mms_conf"] = round(c, 4)
+
+
+def adopt_mms(atoms: list[dict]) -> int:
+    """Use the MMS times as the aligned times of every unit that is not Japanese.
+
+    Sets ``rough``, ``rough_last``, ``kana_starts`` and ``conf`` from ``mms``,
+    ``mms_last`` and ``mms_conf``. Japanese units keep the kana model's times.
+    Returns how many units took the MMS time.
+    """
+    n = 0
+    for a in atoms:
+        if a.get("lang", "ja") == "ja" or a.get("mms") is None:
+            continue
+        last = a.get("mms_last")
+        a["rough"], a["rough_last"] = a["mms"], a["mms"] if last is None else last
+        a["kana_starts"], a["conf"] = [a["mms"]], a.get("mms_conf", 0.0)
+        n += 1
+    return n
