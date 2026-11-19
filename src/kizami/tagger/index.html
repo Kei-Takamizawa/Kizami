@@ -72,7 +72,7 @@ body.dragover::after { content: "Drop audio, lyrics, or label files"; position: 
   <h1>Kizami Tagger<small id="folder"></small></h1>
   <label class="ctl" id="audioCtl" hidden>Audio <select id="audioSel"></select></label>
   <label class="ctl" id="srcCtl" hidden>Load <select id="srcSel"></select><button id="srcBtn" title="Replace the lyrics or the timing with this file. Undo works.">Load</button></label>
-  <button id="openBtn" title="Open audio, lyrics (.txt), label (.txt) or tagger.json files from this computer">Open files…</button>
+  <button id="openBtn" title="Open audio, lyrics (.txt), label (.txt), timing (.json) or tagger.json files from this computer">Open files…</button>
   <input type="file" id="fileIn" multiple hidden>
   <label class="ctl" title="When on, a tap is moved to the nearest point where the sound starts to rise, if one is within the distance on the right. Key: S"><input type="checkbox" id="snapOn"> Snap</label>
   <label class="ctl" title="Largest distance a tap is moved by Snap">±<input type="number" id="snapMs" min="10" max="300" step="10"> ms</label>
@@ -314,7 +314,7 @@ function projectJSON() {
   }, null, 1);
 }
 function loadProject(o, quiet) {
-  if (!o || o.format !== 'kizami-tagger' || !Array.isArray(o.lines)) { status('That JSON file is not a tagger project.', true); return false; }
+  if (!o || o.format !== 'kizami-tagger' || !Array.isArray(o.lines)) { status('That JSON file is not a timing file or a tagger project.', true); return false; }
   pushUndo();
   S.lines = []; S.units = [];
   for (const l of o.lines) {
@@ -330,6 +330,28 @@ function loadProject(o, quiet) {
   if (!quiet) status('Loaded the saved work.');
   return true;
 }
+
+function loadTiming(o) {
+  if (!o || o.format !== 'kizami-timing' || !Array.isArray(o.lines)) return false;
+  const lines = [], units = [];
+  for (const l of o.lines) {
+    if (!l || !Array.isArray(l.chunks) || !l.chunks.length) continue;
+    lines.push(l.agent ? { agent: String(l.agent) } : {});
+    for (const c of l.chunks) {
+      const s = fromMs(c.start_ms);
+      units.push({ text: String(c.text), line: lines.length - 1, s, e: s == null ? null : fromMs(c.end_ms), unc: c.uncertain ? true : undefined });
+    }
+  }
+  if (!units.length) { status('That timing file has no chunks.', true); return true; }
+  pushUndo();
+  S.lines = lines; S.units = units;
+  const firstOpen = S.units.findIndex(u => u.s == null);
+  S.cur = firstOpen < 0 ? 0 : firstOpen;
+  rebuild(); changed();
+  status(`Loaded ${units.length} chunks with their lines from the timing file.`);
+  return true;
+}
+function openJSON(o) { if (!loadTiming(o)) loadProject(o); }
 
 /* ---------- timing helpers ---------- */
 function prevTimed(i) { for (let k = i - 1; k >= 0; k--) if (S.units[k].s != null) return k; return -1; }
@@ -916,12 +938,20 @@ async function openFiles(files) {
     const ext = f.name.split('.').pop().toLowerCase();
     try {
       if (AUDIO_TYPES[ext]) await loadAudio(await f.arrayBuffer(), f.name);
-      else if (ext === 'json') loadProject(JSON.parse(await f.text()));
+      else if (ext === 'json') openJSON(JSON.parse(await f.text()));
       else openText(await f.text());
     } catch (e) { status(`${f.name}: ${e.message}`, true); }
   }
 }
-function openText(text) { if (looksLikeLabels(text)) applyLabels(parseLabels(text)); else setLyrics(text); }
+function openText(text) {
+  if (/^\s*\{/.test(text)) {  // a JSON file, or lyrics that start with a reading such as {今日|きょう}
+    let o = null;
+    try { o = JSON.parse(text); } catch (e) { /* not JSON */ }
+    if (o) { openJSON(o); return; }
+  }
+  if (looksLikeLabels(text)) applyLabels(parseLabels(text));
+  else setLyrics(text);
+}
 $('openBtn').onclick = () => $('fileIn').click();
 $('fileIn').onchange = e => { openFiles([...e.target.files]); e.target.value = ''; };
 addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragover'); });
@@ -945,7 +975,10 @@ async function start() {
 
     if (info.project) loadProject(JSON.parse(await text(info.project)), true);
     else if (info.lyrics) setLyrics(await text(info.lyrics));
-    if (info.labels && !info.project) applyLabels(parseLabels(await text(info.labels)));
+    if (info.labels && !info.project) {
+      const t = await text(info.labels);
+      if (info.labels.toLowerCase().endsWith('.json')) openJSON(JSON.parse(t)); else applyLabels(parseLabels(t));
+    }
     undoStack.length = 0; dirty = false; clearTimeout(saveTimer);
 
     const srcSel = $('srcSel');

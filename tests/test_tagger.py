@@ -65,6 +65,17 @@ def test_session_lists_the_files_of_the_song_folder(song):
     assert info["output"] == DEFAULT_OUTPUT
 
 
+def test_a_timing_file_can_be_the_starting_point(song):
+    (song / "auto_chu.json").write_text('{"format": "kizami-timing"}', encoding="utf-8")
+    (song / PROJECT_NAME).write_text(PROJECT, encoding="utf-8")
+
+    info = Session(song, labels="auto_chu.json").describe()
+
+    assert info["labels"] == "auto_chu.json"
+    assert info["texts"] == ["auto_chu.json", "auto_labels.txt", "lyrics.txt"]  # the project is not offered
+    assert info["project"] == PROJECT_NAME
+
+
 @pytest.mark.parametrize(
     "name", ["../secret.txt", "/etc/passwd", "notes.md", ".hidden.txt", "missing.txt", "", "a\\b.txt"]
 )

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Sequence
 
@@ -29,12 +30,58 @@ class CliError(Exception):
     """A problem to show to the user without a traceback."""
 
 
+MODEL_DIR_ENV = "KIZAMI_MODEL_DIR"
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="kizami",
-        description="Onset-synced timed lyrics. This version has the evaluation tools only.",
+        description="Onset-synced timed lyrics: generate, review and evaluate chunk timing.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+
+    gen = commands.add_parser(
+        "generate",
+        help="make chunk timing for a song from its vocal track and lyrics",
+        description=(
+            "Write auto_chu.json and auto_labels_chu.txt: chunk timing that starts a chunk at each word "
+            "and at the strongest attacks inside words, with kanji shown in hiragana. Prints counts only."
+        ),
+    )
+    gen.add_argument("folder", nargs="?", help="song folder with vocals.wav and lyrics.txt")
+    gen.add_argument("--vocals", help="vocal track (PCM WAV) if not FOLDER/vocals.wav")
+    gen.add_argument("--lyrics", help="lyrics file (UTF-8) if not FOLDER/lyrics.txt")
+    gen.add_argument("-o", "--out-dir", help="folder to write to (default: the song folder)")
+    gen.add_argument(
+        "--level",
+        default="chu",
+        choices=["chu", "dai", "sho", "all"],
+        help="level to write: chu (words plus strong attacks, default); dai (words) and sho (every kana) for comparison",
+    )
+    gen.add_argument(
+        "--kanji",
+        default="hiragana",
+        choices=["hiragana", "keep"],
+        help="show kanji as their reading in hiragana, so a chunk can start inside one (default), or keep them",
+    )
+    gen.add_argument(
+        "--model-dir",
+        default=os.environ.get(MODEL_DIR_ENV),
+        help=f"folder with w2v2-hiragana/ and optionally mms_fa/model.pt (default ${MODEL_DIR_ENV})",
+    )
+    gen.add_argument(
+        "--mms",
+        default="auto",
+        choices=["auto", "on", "off"],
+        help="second model for unsure characters; auto uses it if its file is there",
+    )
+    gen.add_argument("--cache", help="folder to keep model outputs in, so a rerun is fast")
+    gen.add_argument(
+        "--anchor",
+        default="prev-end",
+        choices=["prev-end", "attack"],
+        help="chunk start: end of the previous sound (default) or the attack itself",
+    )
 
     import_labels = commands.add_parser(
         "import-labels",
@@ -116,7 +163,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     tagger.add_argument("folder", help="song folder with the audio file and lyrics.txt")
     tagger.add_argument(
-        "--labels", help="label file in the folder to start from, for example auto_labels.txt"
+        "--labels",
+        help="label file (.txt) or timing file (.json) in the folder to start from, for example auto_chu.json",
     )
     tagger.add_argument(
         "--output",
@@ -259,6 +307,40 @@ def _run_eval(args: argparse.Namespace) -> None:
     )
 
 
+def _run_generate(args: argparse.Namespace) -> None:
+    from kizami.generate import LEVELS, GenerateError, generate
+
+    if args.folder is None and (args.vocals is None or args.lyrics is None):
+        raise CliError("give a song folder, or both --vocals and --lyrics")
+    if not args.model_dir:
+        raise CliError(f"give --model-dir or set {MODEL_DIR_ENV} to the folder that holds w2v2-hiragana/")
+    try:
+        result = generate(
+            args.folder,
+            model_dir=args.model_dir,
+            vocals=args.vocals,
+            lyrics=args.lyrics,
+            out_dir=args.out_dir,
+            levels=LEVELS if args.level == "all" else (args.level,),
+            kanji=args.kanji,
+            mms=args.mms,
+            cache=args.cache,
+            params={"anchor": args.anchor},
+            progress=lambda message: print(f"{message} ...", file=sys.stderr, flush=True),
+        )
+    except GenerateError as exc:
+        raise CliError(str(exc)) from exc
+
+    second = f"{result.from_second_aligner} from the second model" if result.used_second_aligner else "second model off"
+    print(
+        f"{result.lines} lines, {result.units} units, {result.with_attack} on a clear attack, {second}, "
+        f"{result.kanji_kept_whole} kanji compounds timed as one unit"
+    )
+    print("chunk start rule: " + ", ".join(f"{k} {v}" for k, v in result.start_rules.items()))
+    for lv in result.levels:
+        print(f"{lv.level}: {lv.chunks} chunks ({lv.uncertain} uncertain) -> {lv.timing}, {lv.labels}")
+
+
 def _run_tagger(args: argparse.Namespace) -> None:
     try:
         serve(
@@ -275,7 +357,9 @@ def _run_tagger(args: argparse.Namespace) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
-        if args.command == "import-labels":
+        if args.command == "generate":
+            _run_generate(args)
+        elif args.command == "import-labels":
             _run_import_labels(args)
         elif args.command == "suggest-labels":
             _run_suggest_labels(args)

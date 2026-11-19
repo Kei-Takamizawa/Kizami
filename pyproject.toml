@@ -13,6 +13,15 @@ dependencies = []
 
 [project.optional-dependencies]
 audio = ["numpy>=1.26"]
+generate = [
+    "numpy>=1.26",
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "transformers>=4.40",
+    "safetensors>=0.4",
+    "sudachipy>=0.6.8",
+    "sudachidict_core>=20240409",
+]
 dev = ["pytest>=8", "numpy>=1.26"]
 
 [project.scripts]

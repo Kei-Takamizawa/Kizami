@@ -21,6 +21,15 @@ class TimingFormatError(ValueError):
 
 
 @dataclass(frozen=True)
+class Mora:
+    """One sung kana (with its small kana) inside a chunk, and when it starts."""
+
+    kana: str
+    start_ms: int
+    uncertain: bool = False
+
+
+@dataclass(frozen=True)
 class Chunk:
     """One unit of lyric text that lights up at ``start_ms``."""
 
@@ -28,6 +37,7 @@ class Chunk:
     start_ms: int
     end_ms: int | None = None
     uncertain: bool = False
+    morae: tuple[Mora, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,7 +88,32 @@ def _chunk_from_dict(data: Any, path: str) -> Chunk:
     if not isinstance(uncertain, bool):
         raise TimingFormatError(f"{path}.uncertain must be true or false")
 
-    return Chunk(text=text, start_ms=start_ms, end_ms=end_ms, uncertain=uncertain)
+    morae = data.get("morae", [])
+    if not isinstance(morae, list):
+        raise TimingFormatError(f"{path}.morae must be a list")
+
+    return Chunk(
+        text=text,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        uncertain=uncertain,
+        morae=tuple(_mora_from_dict(m, f"{path}.morae[{i}]") for i, m in enumerate(morae)),
+    )
+
+
+def _mora_from_dict(data: Any, path: str) -> Mora:
+    if not isinstance(data, dict):
+        raise TimingFormatError(f"{path} must be an object")
+    kana = data.get("kana")
+    if not isinstance(kana, str) or not kana:
+        raise TimingFormatError(f"{path}.kana must be a non-empty string")
+    start_ms = data.get("start_ms")
+    if not _is_int(start_ms) or start_ms < 0:
+        raise TimingFormatError(f"{path}.start_ms must be an integer of 0 or more")
+    uncertain = data.get("uncertain", False)
+    if not isinstance(uncertain, bool):
+        raise TimingFormatError(f"{path}.uncertain must be true or false")
+    return Mora(kana=kana, start_ms=start_ms, uncertain=uncertain)
 
 
 def _line_from_dict(data: Any, path: str) -> Line:
@@ -140,6 +175,11 @@ def _chunk_to_dict(chunk: Chunk) -> dict[str, Any]:
         data["end_ms"] = chunk.end_ms
     if chunk.uncertain:
         data["uncertain"] = True
+    if chunk.morae:
+        data["morae"] = [
+            {"kana": m.kana, "start_ms": m.start_ms, **({"uncertain": True} if m.uncertain else {})}
+            for m in chunk.morae
+        ]
     return data
 
 
