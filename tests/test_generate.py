@@ -192,7 +192,7 @@ def test_apostrophes_and_hyphens_stay_inside_a_word():
     atoms, _, lines = _atoms("don't stop 'cause rock-n-roll", latin="en")
     assert _shown(atoms, lines) == ["don't", "stop", "'cause", "rock-", "n-", "roll"]
     assert [a["word_start"] for a in atoms] == [True, True, True, True, False, False]
-    assert atoms[0]["letters"] == "don't" and atoms[2]["letters"] == "'cause"
+    assert atoms[0]["letters"] == "don't" and atoms[2]["letters"] == "cause"
 
 
 def test_a_word_without_vowels_is_one_unit():
@@ -879,3 +879,13 @@ def test_a_line_without_letters_takes_the_main_language_of_the_song():
 def test_a_line_without_letters_in_a_japanese_song_stays_japanese():
     atoms, _, _ = _atoms("夜空に星が光る", "3, 2, 1")
     assert {a["lang"] for a in atoms if a["line"] == 1} == {"ja"}
+
+
+def test_a_leading_apostrophe_belongs_to_its_word_and_is_not_a_letter():
+    atoms, _, lines = _atoms("사랑해 'cause I love you", "I want you 'cause", "'til the end", latin="en")
+    shown = _shown(atoms, lines)
+    starts = [a for a, s in zip(atoms, shown) if s in ("'cause", "'til")]
+    assert [s for s in shown if "'" in s] == ["'cause", "'cause", "'til"]
+    assert [a["letters"] for a in starts] == ["cause", "cause", "til"]
+    assert all(a["word_start"] for a in starts)
+    assert [a["letters"] for a in _atoms("don't", latin="en")[0]] == ["don't"]

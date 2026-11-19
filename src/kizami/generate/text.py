@@ -389,6 +389,8 @@ def atoms_for(lines: list[dict], vocab: dict, latin: str = "auto") -> tuple[list
                 prev_word = None
                 continue
             lang = "ko" if script == "ko" else latin
+            if script == "latin" and start > 0 and line["display"][start - 1] in "'\u2019":
+                start -= 1  # a leading apostrophe ('cause) belongs to the word after it
             for w0, w1 in _words(line["display"], start, stop, script, scripts_of[li]):
                 word = line["display"][w0:w1]
                 span = next((sp for sp in line["spans"] if sp[0] <= w0 and w1 <= sp[1]), None)
@@ -402,7 +404,7 @@ def atoms_for(lines: list[dict], vocab: dict, latin: str = "auto") -> tuple[list
                 else:
                     pieces, at = [], w0
                     for syl in syllables(word, lang):
-                        pieces.append((at, at + len(syl), latin_letters(syl)))
+                        pieces.append((at, at + len(syl), latin_letters(syl).strip("'")))  # an edge ' is not sung
                         at += len(syl)
                 linked = lang == "es" and prev_word is not None and links(prev_word, word)
                 for k, (b, e, letters) in enumerate(pieces):
