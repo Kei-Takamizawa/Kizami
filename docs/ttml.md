@@ -25,7 +25,7 @@ kizami ttml song/tagger.json -o song.ttml # the fixes saved in the tagger
 | `--no-audio` | | Do not read audio. |
 | `--offset-ms` | `0` | Display offset: moves every time in the file. Positive shows the lyrics later. From -10000 to 10000. |
 | `--title`, `--artist`, `--album` | | Song details stored in the file. `--artist` can be given more than once. |
-| `--lang` | `ja` | Language code of the lyrics. |
+| `--lang` | the main language | Language code of the lyrics (`xml:lang`). By default the language with the most units in the timing file, else `ja`. |
 
 ## What the file holds
 

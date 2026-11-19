@@ -20,7 +20,30 @@ The song folder holds two files (or name them with `--vocals` and `--lyrics`):
 - `lyrics.txt`: UTF-8 text, one lyric line per line. Blank lines and section
   tags such as `[Chorus]` are skipped. When a word is sung differently from
   how it is written, give the reading in braces: `明日{あした}` or
-  `{明日|あした}`. The braces are not shown in the output.
+  `{明日|あした}`. The braces are not shown in the output. The long form
+  works in every language: `{24/7|twenty four seven}` is timed as one unit
+  and shown as `24/7`.
+
+## Languages
+
+Lyrics can be in Japanese, Korean, English and Spanish, in any mix, also
+inside one line (`Baby 사랑해`, `君のsmileが好き`). The script of each part
+decides its language:
+
+| Written in | Language | Smallest unit | A word is |
+|---|---|---|---|
+| kana, kanji | Japanese | a kana (or a kanji with its reading) | a word found by SudachiPy, with its particles |
+| Hangul | Korean | one syllable block (`사`, `랑`) | the text between spaces (`사랑을`) |
+| Latin letters | English or Spanish (`--latin`) | one syllable by the spelling rules (`beau`, `ti`, `ful`) | the text between spaces |
+
+Latin letters are English or Spanish for the whole song: `--latin auto` (the
+default) guesses from the words, `--latin en` or `--latin es` sets it. A song
+with both English and Spanish is not supported. A Spanish word that starts
+with a vowel after a word that ends with one (`mi amor`, sung `mia-mor`) does
+not start a chunk of its own unless its vowel has a strong attack.
+
+Japanese parts are timed by the Japanese model, all other parts by the letter
+model. A line with Japanese only is timed exactly as before.
 
 ## Models
 
@@ -29,8 +52,8 @@ environment variable `KIZAMI_MODEL_DIR` to it.
 
 | Folder | Needed | What it is |
 |---|---|---|
-| `w2v2-hiragana/` | yes | `vumichien/wav2vec2-large-xlsr-japanese-hiragana` from Hugging Face: `config.json`, `model.safetensors`, `preprocessor_config.json`, `special_tokens_map.json`, `tokenizer_config.json`, `vocab.json` (about 1.3 GB). |
-| `mms_fa/model.pt` | no | The torchaudio MMS_FA forced-alignment model from `https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt` (1,262,047,414 bytes). Check its licence before any commercial use. |
+| `w2v2-hiragana/` | for Japanese | `vumichien/wav2vec2-large-xlsr-japanese-hiragana` from Hugging Face: `config.json`, `model.safetensors`, `preprocessor_config.json`, `special_tokens_map.json`, `tokenizer_config.json`, `vocab.json` (about 1.3 GB). |
+| `mms_fa/model.pt` | for Korean, English and Spanish; optional for Japanese (a second opinion) | The torchaudio MMS_FA forced-alignment model from `https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt` (1,262,047,414 bytes). Check its licence before any commercial use. |
 
 One way to fetch the first model:
 
@@ -49,6 +72,7 @@ The `ffmpeg` program must be installed to read the audio for the models.
 | Option | Default | Meaning |
 |---|---|---|
 | `--level` | `chu` | `chu` (the timing to use). `dai`, `sho` or `all` write the other two levels too, for comparison. |
+| `--latin` | `auto` | Language of lyrics in Latin letters: `auto` (guessed from the words), `en` or `es`. |
 | `--kanji` | `auto` | `auto` keeps kanji as written in `lyrics.txt`. Only a run of kanji with a chunk start inside the reading of one of them is written in hiragana: with a start at the `が` of `願い`, the chunks are `ね` and `がい`; with a start inside `空`, `夜空` becomes `よぞら` (not `夜そら`). A start between `夜` and `空` keeps `夜空`. `hiragana` writes every kanji as its reading. `keep` writes them as in `lyrics.txt`; a chunk then never starts inside a kanji. `auto` and `hiragana` give the same chunk starts. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
@@ -84,13 +108,16 @@ inside a chunk.
 
 ## How a chunk start is chosen
 
-1. **Units.** The lyrics are split into units with SudachiPy. A kanji gets
+1. **Units.** Japanese is split into units with SudachiPy. A kanji gets
    its reading from the dictionary; a compound whose reading cannot be split
-   per kanji (such as `今日`) stays one unit.
+   per kanji (such as `今日`) stays one unit. Korean, English and Spanish are
+   split as in [Languages](#languages).
 2. **Alignment.** A wav2vec2 model trained on hiragana finds where each kana
    is sung (CTC forced alignment). Where it is unsure and the optional MMS
    model points at a clearer attack more than 0.15 s away, the MMS time is
-   used.
+   used. Units in Korean, English and Spanish take their time from the MMS
+   letter model (Korean is written in the letters MMS learned it with), plus
+   a lag per language (`lag_en`, `lag_es`, `lag_ko`).
 3. **Attack.** The aligned time snaps to the strongest nearby vocal attack
    (spectral flux, 70 ms before to 50 ms after). A unit with no attack nearby
    keeps the aligned time and is marked uncertain. A line's first unit can
@@ -116,6 +143,8 @@ inside a chunk.
    A unit that starts 1 second or more after the unit before it in the same
    line (after a long note or a rest) also starts a chunk, with or without a
    strong attack (`gap` in the parameters; 0 turns it off).
+   The 45% line is set for each language on its own units, so a Japanese
+   line keeps its chunk starts in a song that also has English or Korean.
 
 The parameters are in `kizami.generate.place.DEFAULTS`.
 
@@ -149,6 +178,26 @@ the time.
 **The 1-second rule** (measured 2026-11-19) adds 7, 8, 1 and 0 chunk starts
 to songs 1 to 4; 4 of the 16 have no clear attack and are marked uncertain.
 Of the 9 that start on a character with a reference time, 6 are within 50 ms.
+
+**Korean, English and Spanish** are not measured yet (2026-11-19). The
+plan: English and Spanish word starts on JamendoLyrics MultiLang (20 songs
+each), Korean syllable starts on the Children's Song Dataset, then one chorus
+of the owner's own songs per language as the real check. Turn a JamendoLyrics
+annotation into a reference with
+
+```
+kizami import-ref --format jamendo annotations/words/SONG.csv \
+  --words lyrics/SONG.words.txt --lyrics lyrics/SONG.txt -o ref.json
+```
+
+Its times mark the attack, so generate with `--anchor attack --level dai`
+before `kizami eval`. To try parameter values on songs whose model outputs
+are cached, without running the models again:
+
+```
+python -m kizami.sweep song1 song2 --model-dir models --cache cache \
+  --level dai --anchor attack --param lag_en=-0.06:0.02:0.01
+```
 
 ## From Python
 

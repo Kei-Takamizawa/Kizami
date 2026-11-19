@@ -1,7 +1,7 @@
 # Kizami
 
-Kizami makes timed lyrics for Japanese songs, for karaoke-style lyric
-players. Each piece of text lights up at the moment the singer starts to
+Kizami makes timed lyrics for songs in Japanese, Korean, English and
+Spanish, also when one song mixes them, for karaoke-style lyric players. Each piece of text lights up at the moment the singer starts to
 sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
 
 > **Status: early development.** The app makes a TTML file from a song file
@@ -14,6 +14,10 @@ sing it, so the lyrics move with the rhythm of the voice, like a rhythm game.
   grammar boundaries.
 - **Chunks start on strong attacks.** A new chunk starts at each word and
   at each strong attack inside a word, so the text moves with the groove.
+- **Four languages, also mixed.** Japanese, Korean, English and Spanish
+  lyrics can be in one song and even in one line (K-pop with English, a
+  Japanese version of a K-pop song). Korean is timed per syllable block,
+  English and Spanish per syllable, Japanese per kana.
 - **Chunks can start inside a kanji.** A chunk can start at a strong attack
   inside a kanji, such as the `が` of `願`. Kanji stay as written; only a
   word that is split this way is shown in hiragana (`ね` `がい`).
@@ -38,8 +42,9 @@ On a Mac, `kizami app --make-launcher --model-dir path/to/models` puts a
 `Kizami.command` file on the Desktop: after that, a double-click (or one click
 in the Dock) opens the app.
 
-You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
-once). On an Apple silicon Mac, a song of about five minutes took 67 seconds
+You need the `ffmpeg` program and the timing models, downloaded once: the
+Japanese model (about 1.3 GB) for Japanese lyrics, and the letter model (about
+1.3 GB) for Korean, English and Spanish. On an Apple silicon Mac, a song of about five minutes took 67 seconds
 to separate the voice (once per song) and 40 seconds to time. You can choose
 a space after each chunk and a display offset for players or earphones that
 play the sound late. See
@@ -49,7 +54,8 @@ play the sound late. See
 
 - LRC and ASS output.
 - Singer parts for duets, from tags in the lyrics file.
-- Korean, after Japanese.
+- Better accuracy for each language, measured on public data and on the
+  owner's songs.
 
 ## Measure the timing
 
