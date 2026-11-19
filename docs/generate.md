@@ -76,6 +76,38 @@ done
 
 The `ffmpeg` program must be installed to read the audio for the models.
 
+### Dedicated models for English, Spanish and Korean (experimental)
+
+By default the MMS letter model times English, Spanish and Korean units.
+A dedicated speech model per language can time them instead. These models
+are off by default, because it is not yet measured whether they are better on
+singing. Turn one on with its parameter (`w2v_en`, `w2v_es` or `w2v_ko` set
+to 1, for example from Python or `python -m kizami.sweep`). Asking for a model
+whose folder is missing is an error.
+
+| Folder | Model on Hugging Face (revision) | Licence | Output characters |
+|---|---|---|---|
+| `w2v2-en/` | `facebook/wav2vec2-large-960h-lv60-self` (`54074b1c`) | Apache-2.0 | `A` to `Z` and `'` |
+| `w2v2-es/` | `jonatasgrosman/wav2vec2-large-xlsr-53-spanish` (`96d7e9b4`) | Apache-2.0 | `a` to `z`, `á é í ñ ó ö ú ü`, `'` |
+| `w2v2-ko/` | `kresnik/wav2vec2-large-xlsr-korean` (`629c9a35`) | Apache-2.0 | 1,202 Hangul blocks |
+
+Each folder needs `config.json`, `vocab.json`, `preprocessor_config.json` and
+`model.safetensors` (about 1.3 GB each). Kizami reads only `model.safetensors`.
+The English and Spanish models are published only as `pytorch_model.bin`, so
+convert that file once. `weights_only=True` loads the tensors without running
+any code from the file:
+
+```python
+import torch
+from safetensors.torch import save_file
+
+sd = torch.load("pytorch_model.bin", map_location="cpu", weights_only=True)
+save_file({k: v.contiguous() for k, v in sd.items()}, "model.safetensors", metadata={"format": "pt"})
+```
+
+A Korean block that is not among the model's 1,202 blocks, and a digit, is
+aligned as "any sound" and still gets a time.
+
 ## Options
 
 | Option | Default | Meaning |

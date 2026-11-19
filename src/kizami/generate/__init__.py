@@ -28,6 +28,10 @@ Models are read from ``model_dir`` and never downloaded:
 * ``mms_fa/model.pt``: the torchaudio MMS_FA forced-alignment model.
   Optional, used where the first model is unsure. Check its licence before
   any commercial use.
+* ``w2v2-en/``, ``w2v2-es/``, ``w2v2-ko/``: dedicated English, Spanish and
+  Korean wav2vec2 CTC models in the same format as the kana model. Optional
+  and off by default (parameters ``w2v_en``, ``w2v_es``, ``w2v_ko``); see
+  ``kizami.generate.dedicated``.
 
 The heavy parts (numpy, torch, torchaudio, transformers, SudachiPy) and the
 ``ffmpeg`` program are needed: ``pip install "kizami[generate]"``.
@@ -84,6 +88,7 @@ class GenerateResult:
     languages: dict[str, int] = field(default_factory=dict)  # units per language (ja, ko, en, es)
     latin: str = "en"  # the language taken for Latin-script lyrics
     levels: list[LevelResult] = field(default_factory=list)
+    dedicated: list[str] = field(default_factory=list)  # languages timed by their dedicated model
 
 
 def missing_modules() -> list[str]:
@@ -201,6 +206,13 @@ def generate(
     with_japanese_units = languages.get("ja", 0) > 0
     if not any(a["kana"] for a in atoms):
         raise GenerateError(f"{lyrics_path}: no singable lyrics found")
+    from kizami.generate import dedicated
+
+    own_models = [lang for lang in dedicated.MODEL_DIRS if p[f"w2v_{lang}"] > 0 and languages.get(lang)]
+    for lang in own_models:
+        name = dedicated.MODEL_DIRS[lang]
+        for file in dedicated.MODEL_FILES:
+            _need_file(model_root / name / file, f"dedicated {lang} model ({name}/{file} in the model folder)")
 
     try:
         x, sr = audio.load_mono(vocals_path)
@@ -243,6 +255,30 @@ def generate(
             except RuntimeError as exc:
                 raise GenerateError(f"the second model could not align the lyrics ({exc})") from exc
             align.adopt_mms(atoms)
+        voiced = None
+        for lang in own_models:
+            own_dir = model_root / dedicated.MODEL_DIRS[lang]
+            say(f"aligning the lyrics ({lang} model)")
+            try:
+                own_vocab, blank = dedicated.model_vocab(own_dir)
+            except (OSError, ValueError) as exc:
+                raise GenerateError(f"the {lang} model could not be read from {own_dir} ({exc})") from exc
+            key = Path(f"{audio_key}-w2v2-{lang}-{align.w2v2_model_key(own_dir)}.npy") if audio_key else None
+            try:
+                em3 = align.w2v2_emissions(pcm16k, own_dir, key)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise GenerateError(f"the {lang} model could not be loaded from {own_dir} ({exc})") from exc
+            em3 = dedicated.with_star(em3, blank)
+            if p["w2v_silence"] > 0:
+                if voiced is None or len(voiced) != len(em3):
+                    voiced = align.voiced_frames(pcm16k, len(em3))
+                keep = (blank, own_vocab[dedicated.DELIM], -1) if dedicated.DELIM in own_vocab else (blank, -1)
+                em3 = align.mask_silence(em3, voiced, p["w2v_silence"], keep=keep)
+            try:
+                dedicated.align(em3, atoms, own_vocab, lang, blank, star=bool(p["w2v_star"]))
+            except RuntimeError as exc:
+                raise GenerateError(f"the {lang} model could not align the lyrics ({exc})") from exc
+            dedicated.adopt(atoms, lang)
         say("finding the attacks")
         onsets, strengths, _ = audio.detect_attacks(x, sr)
         hiss, fps = audio.hiss_frames(x, sr)
@@ -265,8 +301,11 @@ def generate(
         start_rules=dict(sorted(rules.items())),
         languages=dict(sorted(languages.items())),
         latin=latin_used,
+        dedicated=own_models,
     )
     meta_extra = {"languages": result.languages}
+    if own_models:
+        meta_extra["dedicated_models"] = own_models
     if languages.get("en") or languages.get("es"):
         meta_extra["latin"] = latin_used
     if kanji in ("auto", "hiragana"):

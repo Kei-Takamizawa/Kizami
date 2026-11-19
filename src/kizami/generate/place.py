@@ -56,6 +56,12 @@ DEFAULTS = {
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
     "mms_star": 1.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics
     "mms_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
+    # dedicated per-language models (folders w2v2-en, w2v2-es, w2v2-ko; see generate/dedicated.py)
+    "w2v_en": 0.0,  # 1: English units take their times from the English model instead of MMS
+    "w2v_es": 0.0,  # 1: ... Spanish units from the Spanish model
+    "w2v_ko": 0.0,  # 1: ... Korean units from the Korean model
+    "w2v_star": 1.0,  # 1: a star token before every line (as mms_star)
+    "w2v_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
     "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk

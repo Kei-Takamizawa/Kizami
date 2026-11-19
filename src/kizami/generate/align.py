@@ -31,10 +31,13 @@ def fingerprint(*parts: bytes | str | int) -> str:
     return h.hexdigest()[:16]
 
 
-def kana_model_key(model_dir: Path) -> str:
-    """Identifies the kana model: its vocabulary, its settings and the size of its weights."""
+def w2v2_model_key(model_dir: Path) -> str:
+    """Identifies a wav2vec2 model folder: its vocabulary, its settings and the size of its weights."""
     d = Path(model_dir)
     return fingerprint((d / "vocab.json").read_bytes(), (d / "config.json").read_bytes(), (d / "model.safetensors").stat().st_size)
+
+
+kana_model_key = w2v2_model_key
 
 
 def mms_model_key(model_file: Path) -> str:
@@ -57,8 +60,21 @@ def _run_pieces(audio: np.ndarray, forward) -> np.ndarray:
     return np.concatenate(outs)[:n_frames]
 
 
-def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) -> np.ndarray:
-    """Per 20 ms frame, log-probabilities of every kana of the kana model. ``key``: cache file."""
+def _normalizes(model_dir: Path) -> bool:
+    """Whether the model expects zero-mean, unit-variance audio (``do_normalize``; default yes)."""
+    import json
+
+    f = Path(model_dir) / "preprocessor_config.json"
+    try:
+        return bool(json.loads(f.read_text(encoding="utf-8")).get("do_normalize", True))
+    except (OSError, ValueError, AttributeError):
+        return True
+
+
+def w2v2_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None, normalize: bool | None = None) -> np.ndarray:
+    """Per 20 ms frame, log-probabilities of every token of a Hugging Face wav2vec2 CTC
+    model (only ``model.safetensors`` is read). ``key``: cache file. ``normalize``: scale the
+    audio to zero mean and unit variance first; None reads ``do_normalize`` of the model."""
     if key is not None and key.exists():
         return np.load(key)
     import torch
@@ -68,16 +84,24 @@ def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) 
     hf_logging.set_verbosity_error()
     hf_logging.disable_progress_bar()
     model = Wav2Vec2ForCTC.from_pretrained(str(model_dir), use_safetensors=True).eval()
+    if normalize is None:
+        normalize = _normalizes(model_dir)
 
     def forward(x):
-        x = (x - x.mean()) / (x.std() + 1e-7)
-        return model(torch.from_numpy(x)[None]).logits[0]
+        if normalize:
+            x = (x - x.mean()) / (x.std() + 1e-7)
+        return model(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))[None]).logits[0]
 
     em = _run_pieces(audio, forward)
     if key is not None:
         key.parent.mkdir(parents=True, exist_ok=True)
         np.save(key, em)
     return em
+
+
+def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) -> np.ndarray:
+    """``w2v2_emissions`` of the kana model, which always gets normalized audio."""
+    return w2v2_emissions(audio, model_dir, key, normalize=True)
 
 
 def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
@@ -157,17 +181,20 @@ def voiced_frames(pcm: np.ndarray, n_frames: int, share: float = 0.1, pad: int =
     return voiced
 
 
-def mask_silence(em: np.ndarray, voiced: np.ndarray, penalty: float) -> np.ndarray:
+def mask_silence(em: np.ndarray, voiced: np.ndarray, penalty: float, keep: tuple[int, ...] = (0, -1)) -> np.ndarray:
     """``em`` with every letter made ``penalty`` less likely in frames without singing, so the
-    letter model does not place lyrics in a silent intro or outro. Blank (first column) and
-    star (last column) stay as they are. A ``penalty`` of 0 returns ``em`` itself."""
+    letter model does not place lyrics in a silent intro or outro. The columns in ``keep``
+    stay as they are: by default blank (first column) and star (last column). A ``penalty``
+    of 0 returns ``em`` itself."""
     if penalty <= 0:
         return em
     out = em.copy()
     quiet = np.zeros(len(em), dtype=bool)
     n = min(len(em), len(voiced))
     quiet[:n] = ~np.asarray(voiced[:n], dtype=bool)
-    out[quiet, 1:-1] -= penalty
+    cols = np.ones(em.shape[1], dtype=bool)
+    cols[[k % em.shape[1] for k in keep]] = False
+    out[np.ix_(quiet, cols)] -= penalty
     return out
 
 
