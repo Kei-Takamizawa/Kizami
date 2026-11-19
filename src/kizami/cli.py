@@ -94,6 +94,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="chunk start: end of the previous sound (default) or the attack itself",
     )
 
+    import_ref = commands.add_parser(
+        "import-ref",
+        help="make a reference timing file from a public dataset (JamendoLyrics)",
+        description="Make a reference timing JSON from a public dataset, for kizami eval.",
+    )
+    import_ref.add_argument("times", help="word times (JamendoLyrics: annotations/words/SONG.csv)")
+    import_ref.add_argument("--format", required=True, choices=["jamendo"], help="dataset format")
+    import_ref.add_argument("--words", required=True, help="word list (JamendoLyrics: lyrics/SONG.words.txt)")
+    import_ref.add_argument("--lyrics", required=True, help="lyrics with line breaks (JamendoLyrics: lyrics/SONG.txt)")
+    import_ref.add_argument("-o", "--output", required=True, help="timing JSON file to write")
+
     import_labels = commands.add_parser(
         "import-labels",
         help="convert an Audacity label file into a reference timing file",
@@ -241,6 +252,17 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-browser", action="store_true", help="print the address but do not open the browser"
     )
     return parser
+
+
+def _run_import_ref(args: argparse.Namespace) -> None:
+    from kizami.datasets import DatasetError, jamendo_reference
+
+    try:
+        doc = jamendo_reference(args.times, args.words, args.lyrics)
+    except (DatasetError, OSError, KeyError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    save_document(doc, args.output)
+    print(f"Wrote {len(doc.lines)} lines, {sum(len(line.chunks) for line in doc.lines)} chunks to {args.output}")
 
 
 def _run_import_labels(args: argparse.Namespace) -> None:
@@ -492,6 +514,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_generate(args)
         elif args.command == "import-labels":
             _run_import_labels(args)
+        elif args.command == "import-ref":
+            _run_import_ref(args)
         elif args.command == "suggest-labels":
             _run_suggest_labels(args)
         elif args.command == "export-labels":
