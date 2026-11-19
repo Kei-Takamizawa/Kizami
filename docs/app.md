@@ -38,7 +38,10 @@ kizami app --model-dir path/to/models
 The browser opens the page. (Or set the environment variable
 `KIZAMI_MODEL_DIR` to the model folder and run `kizami app`.) If something is
 missing, the page says what and how to install it. Press Ctrl+C in the
-terminal to stop the app.
+terminal, or close the terminal window, to stop the app.
+
+If the app is already running for the same work folder, `kizami app` only
+opens its page again.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -46,6 +49,28 @@ terminal to stop the app.
 | `--work-dir` | `./kizami-songs` | Where the app keeps one folder per song. |
 | `--port` | 8766 | Port of the page on this computer. Another free port is used if it is busy. |
 | `--no-browser` | | Print the page address but do not open the browser. |
+| `--make-launcher [FILE]` | `~/Desktop/Kizami.command` | Do not start the app: make a file that starts it (see below). |
+
+## Open the app with one click (Mac)
+
+Make a launcher once, in the Kizami folder:
+
+```
+kizami app --make-launcher --model-dir path/to/models
+```
+
+This puts `Kizami.command` on the Desktop. Double-click it: a Terminal window
+opens and starts the app, and the browser shows the page. For one click, drag
+`Kizami.command` to the right end of the Dock (next to the Trash) and click it
+there.
+
+- Keep the Terminal window open while you use the app. Close it to stop the
+  app (Terminal asks whether to stop the running process: choose
+  *Terminate*).
+- Click the launcher again while the app runs, and it only opens the page
+  again.
+- The launcher keeps the model folder, the work folder and the Python that
+  made it. Make it again if you move one of them.
 
 ## Make a TTML file
 

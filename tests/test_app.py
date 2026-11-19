@@ -430,3 +430,99 @@ def test_cli_app_reports_a_work_folder_that_cannot_be_made(tmp_path, capsys):
 def _sec(value):
     h, m, s = value.split(":")
     return int(h) * 3600 + int(m) * 60 + float(s)
+
+
+# -- one-click start -----------------------------------------------------------
+
+
+def test_launcher_starts_this_kizami_with_the_folders_kept(tmp_path):
+    import subprocess
+
+    from kizami.app import make_launcher
+
+    models = tmp_path / "my models"
+    models.mkdir()
+    log = tmp_path / "args.txt"
+    fake = tmp_path / "py thon"
+    fake.write_text(f"#!/bin/bash\nprintf '%s\\n' \"$@\" > '{log}'\n", encoding="utf-8")
+    fake.chmod(0o755)
+
+    path = make_launcher(tmp_path / "Kizami.command", model_dir=models, work_dir=tmp_path / "songs", python=str(fake))
+
+    assert os.access(path, os.X_OK)
+    assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
+    subprocess.run(["bash", str(path)], check=True, timeout=10)
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        "-m", "kizami", "app", "--model-dir", str(models.resolve()), "--work-dir", str((tmp_path / "songs").resolve())
+    ]
+    make_launcher(path, model_dir=models, work_dir=tmp_path, port=9000)  # its own launcher may be replaced
+    assert "--port 9000" in path.read_text(encoding="utf-8")
+
+
+def test_launcher_never_replaces_another_file_and_needs_the_model_folder(tmp_path):
+    from kizami.app import make_launcher
+
+    other = tmp_path / "notes.command"
+    other.write_text("echo mine\n", encoding="utf-8")
+    with pytest.raises(AppError, match="not a Kizami launcher"):
+        make_launcher(other, model_dir=tmp_path, work_dir=tmp_path)
+    with pytest.raises(AppError, match="model folder"):
+        make_launcher(tmp_path / "k.command", model_dir=tmp_path / "none", work_dir=tmp_path)
+    assert other.read_text(encoding="utf-8") == "echo mine\n"
+
+
+def test_cli_makes_the_launcher_instead_of_starting(tmp_path, capsys, monkeypatch):
+    from kizami.cli import main
+
+    monkeypatch.delenv("KIZAMI_MODEL_DIR", raising=False)
+    target = tmp_path / "Kizami.command"
+    assert main(["app", "--make-launcher", str(target)]) == 2
+    assert "--model-dir" in capsys.readouterr().err
+
+    assert main(["app", "--make-launcher", str(target), "--model-dir", str(tmp_path)]) == 0
+    assert target.is_file()
+    assert "Double-click it" in capsys.readouterr().out
+
+
+def test_a_second_start_opens_the_page_of_the_app_that_runs(running, monkeypatch):
+    from kizami.app import RUNNING, _write_running, running_url, serve
+
+    app, port = running
+    url = f"http://127.0.0.1:{port}/?t={app.token}"
+    assert running_url(app.work_dir) is None
+    _write_running(app.work_dir, url)
+    opened = []
+    monkeypatch.setattr(app_module.webbrowser, "open", opened.append)
+
+    assert running_url(app.work_dir) == url
+    assert (app.work_dir / RUNNING).stat().st_mode & 0o777 == 0o600
+    serve(work_dir=app.work_dir, open_browser=True)  # returns at once: no second server
+    assert opened == [url]
+
+    _write_running(app.work_dir, f"http://127.0.0.1:{port}/?t=wrong")
+    assert running_url(app.work_dir) is None
+
+
+def test_the_app_tells_where_it_runs_while_it_runs(tmp_path, monkeypatch):
+    from kizami.app import RUNNING, running_url, serve
+
+    servers = []
+    real = app_module.create_server
+
+    def keep(app, port=0):
+        servers.append(real(app, 0))
+        return servers[-1]
+
+    monkeypatch.setattr(app_module, "create_server", keep)
+    work = tmp_path / "work"
+    thread = threading.Thread(target=serve, kwargs={"work_dir": work, "port": 0, "open_browser": False}, daemon=True)
+    thread.start()
+    for _ in range(200):
+        if (work / RUNNING).exists():
+            break
+        time.sleep(0.01)
+    assert running_url(work) is not None
+
+    servers[0].shutdown()
+    thread.join(5)
+    assert not (work / RUNNING).exists()

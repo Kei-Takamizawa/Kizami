@@ -215,6 +215,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     app.add_argument("--port", type=int, default=DEFAULT_APP_PORT, help="port on this computer to use")
     app.add_argument("--no-browser", action="store_true", help="print the address but do not open the browser")
+    app.add_argument(
+        "--make-launcher",
+        nargs="?",
+        const="",
+        metavar="FILE",
+        help="instead of starting the app, make a file that starts it when you double-click it "
+        "(default ~/Desktop/Kizami.command; keeps --model-dir, --work-dir and --port)",
+    )
 
     tagger = commands.add_parser(
         "tagger",
@@ -459,9 +467,20 @@ def _run_ttml(args: argparse.Namespace) -> None:
 
 
 def _run_app(args: argparse.Namespace) -> None:
-    from kizami.app import AppError
+    from kizami.app import DEFAULT_LAUNCHER, AppError, make_launcher
     from kizami.app import serve as serve_app
 
+    if args.make_launcher is not None:
+        if not args.model_dir:
+            raise CliError(f"give --model-dir (or set {MODEL_DIR_ENV}) so that the launcher knows the model folder")
+        try:
+            path = make_launcher(args.make_launcher or DEFAULT_LAUNCHER, model_dir=args.model_dir,
+                                 work_dir=args.work_dir, port=args.port)  # fmt: skip
+        except AppError as exc:
+            raise CliError(str(exc)) from exc
+        print(f"Made {path}")
+        print("Double-click it to open the Kizami app. For one click, drag it to the right end of the Dock.")
+        return
     try:
         serve_app(work_dir=args.work_dir, model_dir=args.model_dir, port=args.port, open_browser=not args.no_browser)
     except AppError as exc:

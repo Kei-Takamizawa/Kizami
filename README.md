@@ -35,6 +35,10 @@ pip install -e ".[app]"
 kizami app --model-dir path/to/models
 ```
 
+On a Mac, `kizami app --make-launcher --model-dir path/to/models` puts a
+`Kizami.command` file on the Desktop: after that, a double-click (or one click
+in the Dock) opens the app.
+
 You need the `ffmpeg` program and the timing model (about 1.3 GB, downloaded
 once). On an Apple silicon Mac, a song of about five minutes took 67 seconds
 to separate the voice (once per song) and 40 seconds to time. You can choose

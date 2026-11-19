@@ -21,10 +21,14 @@ Nothing is sent to the internet. See ``docs/app.md``.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import re
 import secrets
+import shlex
+import shutil
+import sys
 import threading
 import time
 import traceback
@@ -52,6 +56,9 @@ TAGGER_PROJECT = "tagger.json"
 SOURCE = "source.json"
 UPLOADS = "_uploads"  # in the work folder: song files while they wait for a run
 STALE_UPLOAD_S = 3600  # leftovers older than this are removed when the app starts
+RUNNING = ".app-running.json"  # in the work folder, readable by its owner only: the page address of the running app
+DEFAULT_LAUNCHER = "~/Desktop/Kizami.command"
+_LAUNCHER_MARK = "# Kizami app launcher"
 
 _INDEX_PATH = Path(__file__).with_name("index.html")
 _JOB_PATH = re.compile(r"^/api/jobs/([A-Za-z0-9_-]{8,64})(/ttml|/tagger)?$")
@@ -594,6 +601,102 @@ def page_url(server: ThreadingHTTPServer, app: App) -> str:
     return f"http://127.0.0.1:{server.server_address[1]}/?t={app.token}"
 
 
+def running_url(work_dir: str | Path) -> str | None:
+    """The page address of a Kizami app that runs now for ``work_dir``, or None.
+
+    The app writes its address (with the page token) to ``RUNNING`` in the
+    work folder; the address counts only when that app answers on it.
+    """
+    try:
+        data = json.loads((Path(work_dir) / RUNNING).read_text(encoding="utf-8"))
+        url = data["url"]
+        parts = urlsplit(url)
+        token = parse_qs(parts.query).get("t", [""])[0]
+        port = parts.port
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    if parts.scheme != "http" or parts.hostname != "127.0.0.1" or not token or not port:
+        return None
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+    try:
+        connection.request("GET", "/api/info", headers={TOKEN_HEADER: token})
+        return url if connection.getresponse().status == 200 else None
+    except OSError:
+        return None
+    finally:
+        connection.close()
+
+
+def _write_running(work_dir: Path, url: str) -> None:
+    path = work_dir / RUNNING
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump({"url": url, "pid": os.getpid()}, f)
+    os.chmod(path, 0o600)
+
+
+def _clear_running(work_dir: Path, url: str) -> None:
+    path = work_dir / RUNNING
+    try:
+        if json.loads(path.read_text(encoding="utf-8")).get("url") == url:
+            path.unlink()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def make_launcher(
+    path: str | Path,
+    *,
+    model_dir: str | Path,
+    work_dir: str | Path,
+    port: int = DEFAULT_PORT,
+    python: str = sys.executable,
+) -> Path:
+    """Write a file that starts the app when it is opened (double-click on a Mac), and return its path.
+
+    The file runs this Python with this Kizami, so it keeps working after the
+    terminal that made it is closed. A file at ``path`` that is not a Kizami
+    launcher is never replaced.
+    """
+    path = Path(path).expanduser()
+    model = Path(model_dir).expanduser().resolve()
+    work = Path(work_dir).expanduser().resolve()
+    if not model.is_dir():
+        raise AppError(f"the model folder does not exist: {model}")
+    if not path.parent.is_dir():
+        raise AppError(f"the folder for the launcher does not exist: {path.parent}")
+    if path.exists():
+        try:
+            mine = _LAUNCHER_MARK in path.read_text(encoding="utf-8", errors="replace")[:500]
+        except OSError:
+            mine = False
+        if not mine:
+            raise AppError(f"{path} already exists and is not a Kizami launcher. Choose another file name.")
+    # A double-clicked file may not get the PATH of the terminal, so keep where ffmpeg is now.
+    paths = []
+    ffmpeg = shutil.which("ffmpeg")
+    for folder in ([str(Path(ffmpeg).parent)] if ffmpeg else []) + ["/opt/homebrew/bin", "/usr/local/bin"]:
+        if folder not in paths:
+            paths.append(folder)
+    command = [python, "-m", "kizami", "app", "--model-dir", str(model), "--work-dir", str(work)]
+    if port != DEFAULT_PORT:
+        command += ["--port", str(port)]
+    text = "\n".join(
+        [
+            "#!/bin/bash",
+            f"{_LAUNCHER_MARK}, made by: kizami app --make-launcher",
+            "# Opening this file starts the app and opens its page in the browser.",
+            "# Keep the window open while you use the app. Close it to stop the app.",
+            f"export PATH={shlex.quote(':'.join(paths))}:\"$PATH\"",
+            "exec " + " ".join(shlex.quote(part) for part in command),
+            "",
+        ]
+    )
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
 def serve(
     *,
     work_dir: str | Path = DEFAULT_WORK_DIR,
@@ -601,7 +704,18 @@ def serve(
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
 ) -> None:
-    """Run the app until the user presses Ctrl+C."""
+    """Run the app until the user presses Ctrl+C.
+
+    When an app already runs for this work folder, open its page instead of
+    starting a second one.
+    """
+    already = running_url(Path(work_dir).expanduser().resolve())
+    if already:
+        print("The Kizami app is already running. Opening its page.")
+        print(f"Open {already}")
+        if open_browser:
+            webbrowser.open(already)
+        return
     try:
         app = App(work_dir, model_dir)
     except OSError as exc:
@@ -611,9 +725,13 @@ def serve(
     except OSError:
         server = create_server(app, 0)  # the usual port is busy
     url = page_url(server, app)
+    try:
+        _write_running(app.work_dir, url)
+    except OSError:
+        pass  # only a second start would miss it
     print("Kizami app")
     print(f"Open {url}")
-    print(f"Song folders are kept in {app.work_dir}. Press Ctrl+C to stop.")
+    print(f"Song folders are kept in {app.work_dir}. Press Ctrl+C, or close this window, to stop.")
     for problem in app.problems():
         print(f"warning: {problem}")
     if open_browser:
@@ -623,5 +741,6 @@ def serve(
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        _clear_running(app.work_dir, url)
         server.server_close()
         app.close()
