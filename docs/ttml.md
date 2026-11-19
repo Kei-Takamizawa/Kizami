@@ -29,9 +29,10 @@ kizami ttml song/tagger.json -o song.ttml # the fixes saved in the tagger
 ## What the file holds
 
 - One `<p>` per lyric line and one `<span>` per chunk, each with its own
-  `begin` and `end`. There is no space between spans, except between two
-  chunks of Latin text, which get a space at the end of the first one so that
-  players keep the words apart.
+  `begin` and `end`. A space written between two words in the lyrics stays
+  at the end of the span before it (the timing file keeps it). Two chunks of
+  Latin text without a space between them get one, so that players keep the
+  words apart (this also covers timing files made before spaces were kept).
 - Times as `hh:mm:ss.mmm` (for example `00:01:23.456`).
 - `itunes:timing="Word"`, `itunes:key` `L1`, `L2` ... on the lines, and
   `ttm:agent` `v1` (one more agent per named singer part).
@@ -77,6 +78,4 @@ changed.
 
 - Ruby (furigana): kanji are written as their reading in hiragana instead.
 - Background vocals (`x-bg`), translations and romanization.
-- Spaces inside Japanese lines: the timing file does not keep them, so the
-  TTML has none.
 - LRC and ASS output.

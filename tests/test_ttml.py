@@ -119,6 +119,14 @@ def test_latin_words_keep_a_space_between_them_but_japanese_does_not():
     assert texts == ["I ", "love ", "you, ", "baby", "ねえ"]
 
 
+def test_a_space_kept_at_the_end_of_a_chunk_stays_in_its_span():
+    doc = doc_of(([Chunk("ねえ\u3000", 0), Chunk("きみ ", 200), Chunk("Hi", 400, 500)], None))
+
+    texts = [t for t, _, _ in spans(document_to_ttml(doc))[0]]
+
+    assert texts == ["ねえ\u3000", "きみ ", "Hi"]
+
+
 def test_text_is_escaped():
     doc = doc_of(([Chunk("<&>", 0, 10)], None))
     assert spans(document_to_ttml(doc, title='A "B" & C'))[0][0][0] == "<&>"
