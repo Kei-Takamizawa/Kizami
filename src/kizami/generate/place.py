@@ -304,8 +304,10 @@ def select(atoms, level, m_thr, gap=None):
 def chunks_for(lines, chosen, atoms=None):
     """Per lyric line, the chunks as (text, start time in s, uncertain, morae).
 
-    A chunk runs from its unit to the next chosen unit of the same line.
-    Text before a line's first chosen unit (such as an opening bracket) joins it.
+    A chunk runs from its unit to the next chosen unit of the same line, so a
+    space between two words stays at the end of the chunk before it (only the
+    end of a line is stripped). Text before a line's first chosen unit (such as
+    an opening bracket) joins it.
     ``morae`` lists (kana, start time, uncertain) for every mora of the units
     in the chunk when ``atoms`` (all units, with ``morae`` set) is given and the
     chunk has two or more morae; otherwise it is empty.
@@ -315,10 +317,10 @@ def chunks_for(lines, chosen, atoms=None):
     for i, a in enumerate(chosen):
         nxt = chosen[i + 1] if i + 1 < len(chosen) and chosen[i + 1]["line"] == a["line"] else None
         disp = lines[a["line"]]["display"]
-        text = disp[a["offset"] : nxt["offset"] if nxt else None].strip()
+        text = disp[a["offset"] : nxt["offset"]] if nxt else disp[a["offset"] :].rstrip()
         if not out_lines[a["line"]] and a["offset"] > 0:
             text = disp[: a["offset"]].strip() + text
-        if not text:
+        if not text.strip():
             continue
         morae = []
         if atoms is not None and id(a) in index:
