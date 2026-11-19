@@ -37,7 +37,9 @@ decides its language:
 | Latin letters | English or Spanish (`--latin`) | one syllable by the spelling rules (`beau`, `ti`, `ful`) | the text between spaces |
 
 Latin letters are English or Spanish for the whole song: `--latin auto` (the
-default) guesses from the words, `--latin en` or `--latin es` sets it. A song
+default) guesses from the words, `--latin en` or `--latin es` sets it. The
+guess counts Spanish accents and common words of each language, each different
+word once; fillers such as `oh`, `yeah` and `baby` count for neither. A song
 with both English and Spanish is not supported. A Spanish word that starts
 with a vowel after a word that ends with one (`mi amor`, sung `mia-mor`) does
 not start a chunk of its own unless its vowel has a strong attack.

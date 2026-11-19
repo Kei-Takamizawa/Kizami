@@ -26,3 +26,17 @@ def test_guess_latin():
 def test_guess_latin_ignores_case():
     assert guess_latin("TE QUIERO MI AMOR".split()) == "es"
     assert guess_latin("THE NIGHT IS YOUNG".split()) == "en"
+
+
+def test_guess_latin_treats_fillers_as_neutral():
+    # made-up lines in the style of Latin urban choruses
+    assert guess_latin("Oh no no no, baby Yo te quiero, oh yeah Baby, dime".split()) == "es"
+    assert guess_latin("Baby dame un beso oh oh Mami vamos pa la disco yeah".split()) == "es"
+    assert guess_latin("Baby, ven aquí, oh oh".split()) == "es"
+    assert guess_latin("girl mi amor".split()) == "es"
+
+
+def test_guess_latin_counts_a_repeated_word_once():
+    hook = "I love you " * 6
+    assert guess_latin((hook + "yo te quiero mi amor contigo").split()) == "es"
+    assert guess_latin(("mi amor " * 6 + "I want you to know the night is young").split()) == "en"

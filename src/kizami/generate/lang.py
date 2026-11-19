@@ -14,18 +14,19 @@ from typing import Iterable
 
 SPANISH_MARKS = set("ñáéíóúü¿¡")
 # Common words that are clearly one language. Words both languages share or
-# that fill songs in both (a, me, no, y, o, la as in "la la la") are left out.
+# that fill songs in both (a, me, no, y, o, la as in "la la la", oh, yeah,
+# baby, girl) are left out.
 SPANISH_WORDS = {
     "que", "el", "los", "las", "del", "de", "en", "por", "para", "pero", "porque", "cuando",
     "yo", "tú", "tu", "te", "contigo", "conmigo", "quiero", "amor", "corazón", "noche", "vida",
     "como", "más", "mas", "muy", "todo", "nada", "siempre", "nunca", "ahora", "aquí", "eres",
     "estoy", "esta", "está", "una", "uno", "con", "sin", "bailar", "baila", "mami", "papi", "dime",
-    "quiero", "sé", "solo", "sola", "ella", "nosotros", "tus", "sus", "pa", "hasta", "donde",
+    "quiero", "sé", "solo", "sola", "ella", "nosotros", "tus", "sus", "pa", "hasta", "donde", "mi",
 }  # fmt: skip
 ENGLISH_WORDS = {
     "the", "and", "you", "i", "i'm", "is", "my", "your", "it", "it's", "that", "this", "with",
     "love", "night", "know", "want", "just", "what", "don't", "can't", "we", "they", "are", "be",
-    "of", "to", "in", "on", "for", "all", "baby", "oh", "yeah", "girl", "boy", "never", "feel",
+    "of", "to", "in", "on", "for", "all", "boy", "never", "feel",
     "like", "can", "will", "go", "get", "got", "make", "so", "up", "now", "young", "heart", "kiss",
 }  # fmt: skip
 
@@ -71,10 +72,13 @@ def runs_of(scripts: list[str]) -> list[tuple[int, int, str]]:
 
 
 def guess_latin(words: Iterable[str]) -> str:
-    """``"es"`` when the Latin words look Spanish, else ``"en"``."""
+    """``"es"`` when the Latin words look Spanish, else ``"en"``.
+
+    Each different word counts once, so a hook sung many times does not
+    outweigh the verses.
+    """
     score = 0
-    for w in words:
-        w = unicodedata.normalize("NFKC", w).casefold().strip(".,!?¿¡\"'()")
+    for w in {unicodedata.normalize("NFKC", w).casefold().strip(".,!?¿¡\"'()") for w in words}:
         score += 2 * sum(c in SPANISH_MARKS for c in w)
         score += (w in SPANISH_WORDS) - (w in ENGLISH_WORDS)
     return "es" if score > 0 else "en"
