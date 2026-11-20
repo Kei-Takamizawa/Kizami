@@ -212,7 +212,8 @@ def generate(
         lang
         for lang, name in dedicated.MODEL_DIRS.items()
         if p[f"w2v_{lang}"] > 0 and languages.get(lang) and (model_root / name).is_dir()
-    ]  # without its folder, a language stays on the letter model
+        and (p["w2v_mixed"] > 0 or set(languages) == {lang})
+    ]  # without its folder, or in a song with other languages (unless w2v_mixed), the letter model times it
     for lang in own_models:
         name = dedicated.MODEL_DIRS[lang]
         for file in dedicated.MODEL_FILES:

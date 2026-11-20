@@ -6,7 +6,8 @@ folder (``MODEL_DIRS``), with ``vocab.json``, ``config.json`` and
 is turned on (``w2v_en``, ``w2v_es``, ``w2v_ko`` in ``place.DEFAULTS``; English
 and Spanish are on by default), the units of that language take their times
 from it instead of from the MMS letter model. Without the folder, MMS times
-them as before. Units of other languages are skipped with a "star" token.
+them as before. By default only a song in that one language uses it
+(``w2v_mixed`` 0): in a song with several languages it was not better. Units of other languages are skipped with a "star" token.
 
 The lyrics are written in the model's own characters: letters in the case of
 its vocabulary (``DON'T`` for an upper-case English model, ``corazón`` for a

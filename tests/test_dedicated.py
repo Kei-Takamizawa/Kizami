@@ -399,3 +399,24 @@ def test_margin_default():
     from kizami.generate.place import DEFAULTS
 
     assert DEFAULTS["w2v_margin"] == 0.3
+
+
+@pytest.mark.parametrize("mixed, used", [(0, []), (1, ["en"])])
+def test_in_a_song_with_several_languages_the_dedicated_model_is_used_only_when_asked(
+    tmp_path, monkeypatch, mixed, used
+):
+    pytest.importorskip("sudachipy")
+    _fake_mms(monkeypatch)
+    _song(tmp_path, "사랑해\nHi you\n")
+    _wav(tmp_path / "vocals.wav")
+    _tiny_model(tmp_path / "w2v2-en", EN)
+
+    result = generate(tmp_path, model_dir=tmp_path, latin="en", params={"w2v_mixed": mixed}, out_dir=tmp_path / "out")
+
+    assert result.dedicated == used
+
+
+def test_dedicated_models_are_for_one_language_songs_by_default():
+    from kizami.generate.place import DEFAULTS
+
+    assert DEFAULTS["w2v_mixed"] == 0

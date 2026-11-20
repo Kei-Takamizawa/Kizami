@@ -78,11 +78,20 @@ The `ffmpeg` program must be installed to read the audio for the models.
 
 ### Dedicated models for English and Spanish (optional)
 
-A dedicated speech model per language can time English and Spanish units
+A dedicated speech model per language can time an English or a Spanish song
 instead of the MMS letter model. Put its folder in the model folder and it is
-used; without the folder, the letter model times them as before. On the public
-test songs they place about 70% fewer words more than 1 second away, and
-recall within 50 ms rises by about 4 points (see "Measured accuracy").
+used; without the folder, the letter model times the song as before. On the
+public test songs they place about 70% fewer words more than 1 second away,
+and recall within 50 ms rises by about 4 points (see "Measured accuracy").
+
+By default only a song in that one language uses the model. In a song with
+several languages the letter model times every non-Japanese unit, because on
+the one mixed song with a reference (352 Japanese and 21 English units) the
+dedicated model was not better: first it moved the English words about 1.7 s
+early into the Japanese singing around them; aligned only between the
+neighbouring Japanese times (`w2v_margin` 0.3 s) it kept 6 of 6 English hits
+within 50 ms but moved three Japanese line starts after English lines, 3 hits
+fewer in all. `w2v_mixed` 1 turns it on for such songs, to measure them.
 
 The Korean model is supported but off by default (`w2v_ko` 0), because on
 the Korean test set it was not better and doubled the syllables more than

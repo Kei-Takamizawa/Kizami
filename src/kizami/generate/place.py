@@ -66,6 +66,7 @@ DEFAULTS = {
     "w2v_lag_en": -0.06,  # lag for units timed by a dedicated model (instead of lag_<lang>)
     "w2v_lag_es": -0.01,
     "w2v_lag_ko": 0.0,
+    "w2v_mixed": 0.0,  # 1: also in songs with several languages (song4, 2026-11-20: not better than MMS there)
     "w2v_margin": 0.3,  # a run of one language is aligned only between the other languages' times, this much wider (s)
     "w2v_star": 1.0,  # 1: a star token before every line (as mms_star)
     "w2v_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
