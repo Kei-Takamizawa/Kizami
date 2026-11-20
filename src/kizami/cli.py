@@ -69,9 +69,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "hiragana: show every kanji in hiragana; keep: show kanji as written, a kanji never splits",
     )
     gen.add_argument(
+        "--latin",
+        default="auto",
+        choices=["auto", "en", "es"],
+        help="language of lyrics in Latin letters: auto (default, guessed from the words), en or es",
+    )
+    gen.add_argument(
         "--model-dir",
         default=os.environ.get(MODEL_DIR_ENV),
-        help=f"folder with w2v2-hiragana/ and optionally mms_fa/model.pt (default ${MODEL_DIR_ENV})",
+        help=f"folder with w2v2-hiragana/ (Japanese) and mms_fa/model.pt (Korean, English, Spanish; "
+        f"optional for Japanese) (default ${MODEL_DIR_ENV})",
     )
     gen.add_argument(
         "--mms",
@@ -86,6 +93,19 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["prev-end", "attack"],
         help="chunk start: end of the previous sound (default) or the attack itself",
     )
+
+    import_ref = commands.add_parser(
+        "import-ref",
+        help="make a reference timing file from a public dataset (JamendoLyrics, CSD)",
+        description="Make a reference timing JSON from a public dataset, for kizami eval.",
+    )
+    import_ref.add_argument("times", help="times (JamendoLyrics: annotations/words/SONG.csv; CSD: csv/SONG.csv)")
+    import_ref.add_argument(
+        "--format", required=True, choices=["jamendo", "csd"], help="dataset: jamendo (JamendoLyrics) or csd (Korean CSD)"
+    )
+    import_ref.add_argument("--words", help="word list, JamendoLyrics only (lyrics/SONG.words.txt)")
+    import_ref.add_argument("--lyrics", required=True, help="lyrics with line breaks (JamendoLyrics: lyrics/SONG.txt; CSD: lyric/SONG.txt)")
+    import_ref.add_argument("-o", "--output", required=True, help="timing JSON file to write")
 
     import_labels = commands.add_parser(
         "import-labels",
@@ -186,7 +206,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ttml.add_argument("--title", help="song title to store in the file")
     ttml.add_argument("--artist", action="append", default=[], help="artist to store in the file (repeat for more)")
     ttml.add_argument("--album", help="album to store in the file")
-    ttml.add_argument("--lang", default="ja", help="language code of the lyrics (default ja)")
+    ttml.add_argument("--lang", default=None, help="language code of the lyrics (default: the main language of the timing file, else ja)")
 
     app = commands.add_parser(
         "app",
@@ -234,6 +254,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-browser", action="store_true", help="print the address but do not open the browser"
     )
     return parser
+
+
+def _run_import_ref(args: argparse.Namespace) -> None:
+    from kizami.datasets import DatasetError, csd_reference, jamendo_reference
+
+    if args.format == "jamendo" and not args.words:
+        raise SystemExit("error: --words is needed for --format jamendo")
+    try:
+        if args.format == "csd":
+            doc = csd_reference(args.times, args.lyrics)
+        else:
+            doc = jamendo_reference(args.times, args.words, args.lyrics)
+    except (DatasetError, OSError, KeyError, ValueError) as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    save_document(doc, args.output)
+    print(f"Wrote {len(doc.lines)} lines, {sum(len(line.chunks) for line in doc.lines)} chunks to {args.output}")
 
 
 def _run_import_labels(args: argparse.Namespace) -> None:
@@ -379,6 +415,7 @@ def _run_generate(args: argparse.Namespace) -> None:
             out_dir=args.out_dir,
             levels=LEVELS if args.level == "all" else (args.level,),
             kanji=args.kanji,
+            latin=args.latin,
             mms=args.mms,
             cache=args.cache,
             params={"anchor": args.anchor},
@@ -393,6 +430,12 @@ def _run_generate(args: argparse.Namespace) -> None:
         f"{result.kanji_kept_whole} kanji compounds timed as one unit"
     )
     print("chunk start rule: " + ", ".join(f"{k} {v}" for k, v in result.start_rules.items()))
+    if result.languages:
+        names = ", ".join(f"{k} {v}" for k, v in result.languages.items())
+        latin = f" (Latin letters read as {result.latin})" if result.languages.get(result.latin) else ""
+        print(f"units per language: {names}{latin}")
+    if result.dedicated:
+        print("dedicated models: " + ", ".join(result.dedicated))
     for lv in result.levels:
         shown = f", {lv.kanji_in_hiragana} kanji words in hiragana" if args.kanji == "auto" else ""
         print(f"{lv.level}: {lv.chunks} chunks ({lv.uncertain} uncertain{shown}) -> {lv.timing}, {lv.labels}")
@@ -480,6 +523,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_generate(args)
         elif args.command == "import-labels":
             _run_import_labels(args)
+        elif args.command == "import-ref":
+            _run_import_ref(args)
         elif args.command == "suggest-labels":
             _run_suggest_labels(args)
         elif args.command == "export-labels":
