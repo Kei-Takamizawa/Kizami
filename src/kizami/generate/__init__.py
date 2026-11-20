@@ -279,7 +279,7 @@ def generate(
                 keep = (blank, own_vocab[dedicated.DELIM], -1) if dedicated.DELIM in own_vocab else (blank, -1)
                 em3 = align.mask_silence(em3, voiced, p["w2v_silence"], keep=keep)
             try:
-                dedicated.align(em3, atoms, own_vocab, lang, blank, star=bool(p["w2v_star"]))
+                dedicated.align(em3, atoms, own_vocab, lang, blank, star=bool(p["w2v_star"]), margin=p["w2v_margin"])
             except RuntimeError as exc:
                 raise GenerateError(f"the {lang} model could not align the lyrics ({exc})") from exc
             dedicated.adopt(atoms, lang)

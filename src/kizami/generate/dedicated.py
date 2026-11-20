@@ -17,6 +17,7 @@ the model's training transcripts.
 from __future__ import annotations
 
 import json
+import math
 import unicodedata
 from pathlib import Path
 
@@ -136,37 +137,92 @@ def with_star(em: np.ndarray, blank: int) -> np.ndarray:
     return np.concatenate([em, np.log1p(-p_blank)[:, None]], axis=1).astype(np.float32)
 
 
-def align(em: np.ndarray, atoms: list[dict], vocab: dict, lang: str, blank: int, star: bool = True) -> int:
+def runs(atoms: list[dict], lang: str) -> list[tuple[int, int]]:
+    """The index ranges ``[start, stop)`` of consecutive units of ``lang``."""
+    out, i = [], 0
+    while i < len(atoms):
+        if atoms[i].get("lang") != lang:
+            i += 1
+            continue
+        j = i
+        while j < len(atoms) and atoms[j].get("lang") == lang:
+            j += 1
+        out.append((i, j))
+        i = j
+    return out
+
+
+def _window(atoms: list[dict], i0: int, i1: int, n_frames: int, margin: float) -> tuple[int, int]:
+    """Frames where the run ``[i0, i1)`` may be sung: from the last aligned start of the unit
+    before it to the aligned start of the unit after it (times from the other models), widened
+    by ``margin`` seconds. A side with no timed neighbour is open to the song's edge."""
+    start, stop = 0, n_frames
+    for k in range(i0 - 1, -1, -1):
+        t = atoms[k].get("rough_last")
+        t = atoms[k].get("rough") if t is None else t
+        if t is not None:
+            start = max(0, int(math.floor((t - margin) * SR / STRIDE)))
+            break
+    for k in range(i1, len(atoms)):
+        t = atoms[k].get("rough")
+        if t is not None:
+            stop = min(n_frames, int(math.ceil((t + margin) * SR / STRIDE)) + 1)
+            break
+    return start, stop
+
+
+def align(
+    em: np.ndarray, atoms: list[dict], vocab: dict, lang: str, blank: int, star: bool = True, margin: float = 0.3
+) -> int:
     """Set ``w2v`` (start of the first token), ``w2v_last`` (start of the last token) and
     ``w2v_conf`` (weakest token) on each unit of ``lang``. ``em`` has the star column last
-    (``with_star``). Returns how many units got a time."""
+    (``with_star``). Returns how many units got a time.
+
+    Each run of units of ``lang`` is aligned on its own, only between the times the other
+    models gave the units around it (``margin`` seconds wider), so in a song with several
+    languages a word cannot drift into another language's singing. A song in one language
+    is one run over the whole track. A run that cannot be aligned in its window gets no
+    time here and keeps the letter model's.
+    """
     import torch
     import torchaudio.functional as F
 
-    toks, owner = tokens(atoms, vocab, lang, star=star)
     for a in atoms:
         if a.get("lang") == lang:
             a["w2v"], a["w2v_last"], a["w2v_conf"] = None, None, 0.0
-    if not any(o >= 0 for o in owner):
-        return 0
     star_id = em.shape[1] - 1
-    ids = [star_id if t == STAR else vocab[t] for t in toks]
-    x = torch.from_numpy(np.ascontiguousarray(em, dtype=np.float32))[None]
-    aligned, scores = F.forced_align(x, torch.tensor([ids], dtype=torch.int32), blank=blank)
-    spans = F.merge_tokens(aligned[0], scores[0].exp(), blank=blank)
-    if len(spans) != len(ids):
-        raise RuntimeError(f"{lang} alignment lost tokens ({len(spans)} of {len(ids)})")
     timed = set()
-    for sp, ai in zip(spans, owner):
-        if ai < 0:
+    for i0, i1 in runs(atoms, lang):
+        toks, owner = tokens(atoms[i0:i1], vocab, lang, star=star)
+        owner = [o + i0 if o >= 0 else o for o in owner]
+        if i0 > 0 and not (toks and toks[0] == STAR and owner[0] == -1):
+            toks, owner = [STAR, *toks], [-1, *owner]  # the end of the singing before
+        if i1 < len(atoms) and not (toks and toks[-1] == STAR and owner[-1] == -1):
+            toks, owner = [*toks, STAR], [*owner, -1]  # the start of the singing after
+        if not any(o >= 0 for o in owner):
             continue
-        a = atoms[ai]
-        t = sp.start * STRIDE / SR
-        if a["w2v"] is None:
-            a["w2v"], a["w2v_conf"] = t, 1.0
-        a["w2v_last"] = t
-        a["w2v_conf"] = round(min(a["w2v_conf"], float(sp.score)), 4)
-        timed.add(ai)
+        f0, f1 = _window(atoms, i0, i1, len(em), margin)
+        ids = [star_id if t == STAR else vocab[t] for t in toks]
+        if f1 - f0 < len(ids):
+            continue
+        x = torch.from_numpy(np.ascontiguousarray(em[f0:f1], dtype=np.float32))[None]
+        try:
+            aligned, scores = F.forced_align(x, torch.tensor([ids], dtype=torch.int32), blank=blank)
+        except RuntimeError:
+            continue
+        spans = F.merge_tokens(aligned[0], scores[0].exp(), blank=blank)
+        if len(spans) != len(ids):
+            continue
+        for sp, ai in zip(spans, owner):
+            if ai < 0:
+                continue
+            a = atoms[ai]
+            t = (f0 + sp.start) * STRIDE / SR
+            if a["w2v"] is None:
+                a["w2v"], a["w2v_conf"] = t, 1.0
+            a["w2v_last"] = t
+            a["w2v_conf"] = round(min(a["w2v_conf"], float(sp.score)), 4)
+            timed.add(ai)
     return len(timed)
 
 

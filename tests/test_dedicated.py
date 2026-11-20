@@ -332,3 +332,70 @@ def test_cli_names_the_dedicated_models_used(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(gen, "generate", fake)
     assert main(["generate", str(tmp_path), "--model-dir", str(tmp_path)]) == 0
     assert "dedicated models: en" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------- songs with several languages
+
+
+def test_runs_are_the_stretches_of_one_language():
+    from kizami.generate.dedicated import runs
+
+    atoms = [{"lang": x} for x in ("ja", "en", "en", "ja", "en", "ko")]
+    assert runs(atoms, "en") == [(1, 3), (4, 5)]
+    assert runs(atoms, "ko") == [(5, 6)]
+    assert runs(atoms, "es") == []
+
+
+def _mixed():
+    atoms = _atoms("あい", "Hi", "かき", latin="en")
+    for a in atoms:
+        if a["line"] == 0:
+            a["rough"], a["rough_last"] = 0.1, 0.6
+        elif a["line"] == 2:
+            a["rough"] = a["rough_last"] = 1.6
+    path = [None] * 100
+    em = _peaked(EN, path)
+    for f, tok, p in ((10, "H", 0.999), (11, "I", 0.999), (50, "H", 0.9), (51, "I", 0.9)):
+        em[f, :] = np.log(0.0001)
+        em[f, EN[tok]] = np.log(p)  # a stronger look-alike inside the Japanese singing at 0.2 s
+    return atoms, with_star(em, blank=0)
+
+
+def test_english_between_japanese_lines_stays_between_their_times():
+    pytest.importorskip("torchaudio")
+    from kizami.generate.dedicated import align
+
+    atoms, em = _mixed()
+    assert align(em, atoms, EN, "en", blank=0, margin=0.3) == 1
+    hi = next(a for a in atoms if a["lang"] == "en")
+    assert hi["w2v"] == pytest.approx(1.0, abs=0.021)
+
+
+def test_without_times_on_the_neighbours_the_whole_song_is_searched():
+    pytest.importorskip("torchaudio")
+    from kizami.generate.dedicated import align
+
+    atoms, em = _mixed()
+    for a in atoms:
+        a["rough"] = a["rough_last"] = None
+    align(em, atoms, EN, "en", blank=0, margin=0.3)
+    hi = next(a for a in atoms if a["lang"] == "en")
+    assert hi["w2v"] == pytest.approx(0.2, abs=0.021)
+
+
+def test_a_run_that_does_not_fit_its_window_keeps_no_dedicated_time():
+    pytest.importorskip("torchaudio")
+    from kizami.generate.dedicated import align
+
+    atoms, em = _mixed()
+    for a in atoms:
+        if a["line"] == 2:
+            a["rough"] = a["rough_last"] = 0.62  # next line starts right after: two frames of room
+    assert align(em, atoms, EN, "en", blank=0, margin=0.0) == 0
+    assert next(a for a in atoms if a["lang"] == "en")["w2v"] is None
+
+
+def test_margin_default():
+    from kizami.generate.place import DEFAULTS
+
+    assert DEFAULTS["w2v_margin"] == 0.3
