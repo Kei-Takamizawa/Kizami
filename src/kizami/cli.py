@@ -434,6 +434,8 @@ def _run_generate(args: argparse.Namespace) -> None:
         names = ", ".join(f"{k} {v}" for k, v in result.languages.items())
         latin = f" (Latin letters read as {result.latin})" if result.languages.get(result.latin) else ""
         print(f"units per language: {names}{latin}")
+    if result.dedicated:
+        print("dedicated models: " + ", ".join(result.dedicated))
     for lv in result.levels:
         shown = f", {lv.kanji_in_hiragana} kanji words in hiragana" if args.kanji == "auto" else ""
         print(f"{lv.level}: {lv.chunks} chunks ({lv.uncertain} uncertain{shown}) -> {lv.timing}, {lv.labels}")

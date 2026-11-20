@@ -76,14 +76,19 @@ done
 
 The `ffmpeg` program must be installed to read the audio for the models.
 
-### Dedicated models for English, Spanish and Korean (experimental)
+### Dedicated models for English and Spanish (optional)
 
-By default the MMS letter model times English, Spanish and Korean units.
-A dedicated speech model per language can time them instead. These models
-are off by default, because it is not yet measured whether they are better on
-singing. Turn one on with its parameter (`w2v_en`, `w2v_es` or `w2v_ko` set
-to 1, for example from Python or `python -m kizami.sweep`). Asking for a model
-whose folder is missing is an error.
+A dedicated speech model per language can time English and Spanish units
+instead of the MMS letter model. Put its folder in the model folder and it is
+used; without the folder, the letter model times them as before. On the public
+test songs they place about 70% fewer words more than 1 second away, and
+recall within 50 ms rises by about 4 points (see "Measured accuracy").
+
+The Korean model is supported but off by default (`w2v_ko` 0), because on
+the Korean test set it was not better and doubled the syllables more than
+1 second away. Set `w2v_en`, `w2v_es` or `w2v_ko` to 0 or 1 to choose, for
+example from Python or `python -m kizami.sweep`. A model folder that lacks one
+of its files is an error.
 
 | Folder | Model on Hugging Face (revision) | Licence | Output characters |
 |---|---|---|---|
@@ -228,13 +233,33 @@ Children's Song Dataset, 100 solo recordings of 50 children's songs,
 reference starts matched within 50 ms. The lags were tuned on these same
 songs (both halves of each set agreed), so the tuned numbers are optimistic.
 
-| | Starts | Before tuning (lag −0.02) | Now (tuned lag, star token, silence penalty) |
-|---|---|---|---|
-| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 57.1% (`lag_en` −0.03) |
-| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 61.0% (`lag_es` 0.00) |
-| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | 63.0% (`lag_ko` +0.01) |
+| | Starts | Before tuning (lag −0.02) | Letter model (tuned lag, star token, silence penalty) | Dedicated model (measured 2026-11-20) |
+|---|---|---|---|---|
+| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 57.1% (`lag_en` −0.03) | **61.4%** (60.1 to 62.6%; `w2v_lag_en` −0.06), used by default |
+| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 61.0% (`lag_es` 0.00) | **64.8%** (63.5 to 66.1%; `w2v_lag_es` −0.01), used by default |
+| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | **63.0%** (`lag_ko` +0.01), used by default | 62.8% (`w2v_lag_ko` 0.00) |
 
-This is far below the 90% target. What the misses are:
+The intervals treat every word as independent; words of one song are not,
+so the true uncertainty is wider. The dedicated models won on both halves of
+each set (English +50 and +195 words, Spanish +129 and +72), so the gain is
+not one song's luck.
+
+Words more than 1 second away, letter model → dedicated model: English 540 →
+173, Spanish 323 → 87, Korean 137 → 294. Within 200 ms: English 86.3% →
+93.7%, Spanish 91.1% → 97.0%, Korean 94.0% → 87.7%. So the dedicated models
+mostly remove the large errors; the remaining misses are 50 to 200 ms off.
+For comparison, research systems trained on singing report on the 20-song
+English Jamendo test set a median word-start error of 41 to 44 ms and about
+94% within 200 ms (Cheng, Nakano and Goto, DAFx 2025 and ICMC 2026). They do
+not report the share within 50 ms; from the median it is a little over half
+(our estimate). Our English result (93.7% within 200 ms) is close to theirs,
+with the caveat that its lag was tuned on these songs.
+
+On the owner's MacBook Air the models take 12.5 s per English song, 13.5 s
+per Spanish song and 6.4 s per Korean recording, once per song with
+`--cache`.
+
+This is far below the 90% target. With the letter model, the misses were:
 
 - **English:** 9.5% of the words are placed more than 1 second away (whole
   passages aligned to the wrong place, often onto singing that is not in the

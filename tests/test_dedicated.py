@@ -175,7 +175,9 @@ def test_adopt_takes_the_dedicated_time_for_its_language_only():
     ]  # fmt: skip
     assert adopt(atoms, "en") == 1
     assert (atoms[0]["rough"], atoms[0]["rough_last"], atoms[0]["kana_starts"], atoms[0]["conf"]) == (2.0, 2.2, [2.0], 0.7)
+    assert atoms[0]["src"] == "w2v"
     assert atoms[1]["rough"] == 3.0 and atoms[2]["rough"] == 5.0
+    assert "src" not in atoms[1] and "src" not in atoms[2]
 
 
 # ---------------------------------------------------------------- emissions from a small model
@@ -216,17 +218,30 @@ def _song(tmp_path, lyrics):
     (tmp_path / "mms_fa" / "model.pt").write_bytes(b"")
 
 
-def test_asking_for_a_dedicated_model_that_is_not_there_is_an_error(tmp_path):
+def test_an_incomplete_dedicated_model_folder_is_an_error(tmp_path):
     _song(tmp_path, "Hi you\n")
+    (tmp_path / "w2v2-en").mkdir()
+    (tmp_path / "w2v2-en" / "vocab.json").write_text(json.dumps(EN), encoding="utf-8")
     with pytest.raises(GenerateError, match="w2v2-en"):
         generate(tmp_path, model_dir=tmp_path, params={"w2v_en": 1})
 
 
-def test_dedicated_models_are_off_by_default():
+def test_english_and_spanish_models_are_on_by_default_and_korean_is_off():
     from kizami.generate.place import DEFAULTS
 
-    assert DEFAULTS["w2v_en"] == DEFAULTS["w2v_es"] == DEFAULTS["w2v_ko"] == 0
+    assert DEFAULTS["w2v_en"] == DEFAULTS["w2v_es"] == 1 and DEFAULTS["w2v_ko"] == 0
     assert DEFAULTS["w2v_star"] == 1 and DEFAULTS["w2v_silence"] == 5.0
+    assert (DEFAULTS["w2v_lag_en"], DEFAULTS["w2v_lag_es"], DEFAULTS["w2v_lag_ko"]) == (-0.06, -0.01, 0.0)
+    assert (DEFAULTS["lag_en"], DEFAULTS["lag_es"], DEFAULTS["lag_ko"]) == (-0.03, 0.0, 0.01)  # MMS times
+
+
+def test_lag_depends_on_which_model_timed_the_unit():
+    from kizami.generate.place import DEFAULTS, lag_for
+
+    assert lag_for({"lang": "en"}, DEFAULTS) == -0.03
+    assert lag_for({"lang": "en", "src": "w2v"}, DEFAULTS) == -0.06
+    assert lag_for({"lang": "es", "src": "w2v"}, DEFAULTS) == -0.01
+    assert lag_for({"lang": "ja"}, DEFAULTS) == DEFAULTS["lag"]
 
 
 def test_silence_penalty_spares_the_given_columns():
@@ -293,3 +308,27 @@ def test_emissions_follow_do_normalize_of_the_model(tmp_path):
     assert not np.allclose(on, off)
     (tmp_path / "m" / "preprocessor_config.json").write_text('{"do_normalize": false}', encoding="utf-8")
     assert np.allclose(w2v2_emissions(x, tmp_path / "m"), off)
+
+
+def test_without_the_dedicated_model_folder_the_letter_model_times_english(tmp_path, monkeypatch):
+    pytest.importorskip("sudachipy")
+    _fake_mms(monkeypatch)
+    _song(tmp_path, "Hi you\n")
+    _wav(tmp_path / "vocals.wav")
+
+    result = generate(tmp_path, model_dir=tmp_path, out_dir=tmp_path / "out")  # w2v_en is on by default
+
+    assert result.dedicated == []
+
+
+def test_cli_names_the_dedicated_models_used(tmp_path, monkeypatch, capsys):
+    import kizami.generate as gen
+    from kizami.cli import main
+
+    def fake(*args, **kwargs):
+        return gen.GenerateResult(lines=1, units=2, with_attack=2, from_second_aligner=0, kanji_kept_whole=0,
+                                  used_second_aligner=True, start_rules={}, languages={"en": 2}, dedicated=["en"])
+
+    monkeypatch.setattr(gen, "generate", fake)
+    assert main(["generate", str(tmp_path), "--model-dir", str(tmp_path)]) == 0
+    assert "dedicated models: en" in capsys.readouterr().out

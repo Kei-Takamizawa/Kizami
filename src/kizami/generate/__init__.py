@@ -29,9 +29,9 @@ Models are read from ``model_dir`` and never downloaded:
   Optional, used where the first model is unsure. Check its licence before
   any commercial use.
 * ``w2v2-en/``, ``w2v2-es/``, ``w2v2-ko/``: dedicated English, Spanish and
-  Korean wav2vec2 CTC models in the same format as the kana model. Optional
-  and off by default (parameters ``w2v_en``, ``w2v_es``, ``w2v_ko``); see
-  ``kizami.generate.dedicated``.
+  Korean wav2vec2 CTC models in the same format as the kana model. Optional:
+  English and Spanish are used when their folder is there (parameters
+  ``w2v_en``, ``w2v_es``, ``w2v_ko``); see ``kizami.generate.dedicated``.
 
 The heavy parts (numpy, torch, torchaudio, transformers, SudachiPy) and the
 ``ffmpeg`` program are needed: ``pip install "kizami[generate]"``.
@@ -208,7 +208,11 @@ def generate(
         raise GenerateError(f"{lyrics_path}: no singable lyrics found")
     from kizami.generate import dedicated
 
-    own_models = [lang for lang in dedicated.MODEL_DIRS if p[f"w2v_{lang}"] > 0 and languages.get(lang)]
+    own_models = [
+        lang
+        for lang, name in dedicated.MODEL_DIRS.items()
+        if p[f"w2v_{lang}"] > 0 and languages.get(lang) and (model_root / name).is_dir()
+    ]  # without its folder, a language stays on the letter model
     for lang in own_models:
         name = dedicated.MODEL_DIRS[lang]
         for file in dedicated.MODEL_FILES:

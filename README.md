@@ -44,7 +44,8 @@ in the Dock) opens the app.
 
 You need the `ffmpeg` program and the timing models, downloaded once: the
 Japanese model (about 1.3 GB) for Japanese lyrics, and the letter model (about
-1.3 GB) for Korean, English and Spanish. On an Apple silicon Mac, a song of about five minutes took 67 seconds
+1.3 GB) for Korean, English and Spanish. Optional English and Spanish models
+(about 1.3 GB each) make English and Spanish timing more accurate. On an Apple silicon Mac, a song of about five minutes took 67 seconds
 to separate the voice (once per song) and 40 seconds to time. You can choose
 a space after each chunk and a display offset for players or earphones that
 play the sound late. See

@@ -3,9 +3,10 @@
 Each one is a Hugging Face wav2vec2 CTC model in its own folder of the model
 folder (``MODEL_DIRS``), with ``vocab.json``, ``config.json`` and
 ``model.safetensors``. Where a song has units of that language and the model
-is turned on (``w2v_en``, ``w2v_es``, ``w2v_ko`` in ``place.DEFAULTS``), the
-units of that language take their times from it instead of from the MMS
-letter model. Units of other languages are skipped with a "star" token.
+is turned on (``w2v_en``, ``w2v_es``, ``w2v_ko`` in ``place.DEFAULTS``; English
+and Spanish are on by default), the units of that language take their times
+from it instead of from the MMS letter model. Without the folder, MMS times
+them as before. Units of other languages are skipped with a "star" token.
 
 The lyrics are written in the model's own characters: letters in the case of
 its vocabulary (``DON'T`` for an upper-case English model, ``corazón`` for a
@@ -179,5 +180,6 @@ def adopt(atoms: list[dict], lang: str) -> int:
         last = a.get("w2v_last")
         a["rough"], a["rough_last"] = a["w2v"], a["w2v"] if last is None else last
         a["kana_starts"], a["conf"] = [a["w2v"]], a.get("w2v_conf", 0.0)
+        a["src"] = "w2v"  # place.lag_for takes w2v_lag_<lang> for it
         n += 1
     return n

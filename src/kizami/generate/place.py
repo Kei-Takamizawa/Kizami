@@ -57,9 +57,15 @@ DEFAULTS = {
     "mms_star": 1.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics
     "mms_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
     # dedicated per-language models (folders w2v2-en, w2v2-es, w2v2-ko; see generate/dedicated.py)
-    "w2v_en": 0.0,  # 1: English units take their times from the English model instead of MMS
-    "w2v_es": 0.0,  # 1: ... Spanish units from the Spanish model
-    "w2v_ko": 0.0,  # 1: ... Korean units from the Korean model
+    # 1: units of that language take their times from its model when the folder is there, not from MMS.
+    # JamendoLyrics (2026-11-20): English 57.1% -> 61.4% within 50 ms, Spanish 61.0% -> 64.8%;
+    # CSD Korean 63.0% -> 62.8% with twice the errors over 1 s, so Korean stays on MMS.
+    "w2v_en": 1.0,
+    "w2v_es": 1.0,
+    "w2v_ko": 0.0,
+    "w2v_lag_en": -0.06,  # lag for units timed by a dedicated model (instead of lag_<lang>)
+    "w2v_lag_es": -0.01,
+    "w2v_lag_ko": 0.0,
     "w2v_star": 1.0,  # 1: a star token before every line (as mms_star)
     "w2v_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
     # level chu
@@ -82,9 +88,14 @@ def lang_of(a) -> str:
 
 
 def lag_for(a, p) -> float:
-    """The lag added to a unit's aligned time: ``lag`` for Japanese, ``lag_<lang>`` for the others."""
+    """The lag added to a unit's aligned time: ``lag`` for Japanese, ``lag_<lang>`` for the others,
+    and ``w2v_lag_<lang>`` for a unit timed by a dedicated model."""
     lang = lang_of(a)
-    return p["lag"] if lang == "ja" else p.get(f"lag_{lang}", p["lag"])
+    if lang == "ja":
+        return p["lag"]
+    if a.get("src") == "w2v" and f"w2v_lag_{lang}" in p:
+        return p[f"w2v_lag_{lang}"]
+    return p.get(f"lag_{lang}", p["lag"])
 
 
 def is_sibilant(a) -> bool:
