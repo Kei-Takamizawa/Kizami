@@ -76,6 +76,16 @@ done
 
 The `ffmpeg` program must be installed to read the audio for the models.
 
+On Ubuntu, `scripts/setup-ubuntu.sh` does all of this: system packages, a
+virtual environment, and the models at pinned revisions with their sizes
+checked. `scripts/setup-ubuntu.sh --model-dir ~/kizami-models --dedicated`
+fetches all five models (6.4 GB); leave out `--dedicated` for the two needed
+models (2.6 GB). It can be run again at any time and skips what is in place.
+
+The models run on the CPU. Nothing in Kizami uses a GPU yet, so a machine with
+a graphics card times a song no faster. (Demucs, which separates the voice,
+chooses a GPU by itself when it finds one.)
+
 ### Dedicated models for English and Spanish (optional)
 
 A dedicated speech model per language can time an English or a Spanish song
