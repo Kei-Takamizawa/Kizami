@@ -100,14 +100,14 @@ PYTEXT
 # Each entry: folder, Hugging Face repository, revision, files. The revisions are
 # pinned, so a later change in the repository cannot change the timing you measure.
 hf_get() {  # folder repo revision file...
-    local dir="$MODEL_DIR/$1" repo="$2" rev="$3"; shift 3
+    local name="$1" dir="$MODEL_DIR/$1" repo="$2" rev="$3"; shift 3
     mkdir -p "$dir"
     for file in "$@"; do
         if [ -s "$dir/$file" ]; then
-            echo "have $1/$file"
+            echo "have $name/$file"
             continue
         fi
-        echo "fetching $1/$file"
+        echo "fetching $name/$file"
         curl -fL --retry 3 --retry-delay 2 -o "$dir/$file.part" \
             "https://huggingface.co/$repo/resolve/$rev/$file"
         mv "$dir/$file.part" "$dir/$file"
