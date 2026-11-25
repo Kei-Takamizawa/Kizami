@@ -82,9 +82,11 @@ checked. `scripts/setup-ubuntu.sh --model-dir ~/kizami-models --dedicated`
 fetches all five models (6.4 GB); leave out `--dedicated` for the two needed
 models (2.6 GB). It can be run again at any time and skips what is in place.
 
-The models run on the CPU. Nothing in Kizami uses a GPU yet, so a machine with
-a graphics card times a song no faster. (Demucs, which separates the voice,
-chooses a GPU by itself when it finds one.)
+The models run on an NVIDIA GPU when torch sees one, else on the CPU
+(`--device auto`, the default; `--device cpu` or `--device cuda` to choose).
+Demucs, which separates the voice, also chooses a GPU by itself. Results on
+the GPU can differ from the CPU in rare starts, because the numbers are
+rounded differently.
 
 ### Dedicated models for English and Spanish (optional)
 
@@ -141,6 +143,7 @@ aligned as "any sound" and still gets a time.
 | `--kanji` | `auto` | `auto` keeps kanji as written in `lyrics.txt`. Only a run of kanji with a chunk start inside the reading of one of them is written in hiragana: with a start at the `が` of `願い`, the chunks are `ね` and `がい`; with a start inside `空`, `夜空` becomes `よぞら` (not `夜そら`). A start between `夜` and `空` keeps `夜空`. `hiragana` writes every kanji as its reading. `keep` writes them as in `lyrics.txt`; a chunk then never starts inside a kanji. `auto` and `hiragana` give the same chunk starts. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
+| `--device` | `auto` | Where the models run: `auto` takes an NVIDIA GPU when torch sees one, else the CPU; `cpu` or `cuda` to choose. |
 | `--cache` | none | Folder for the model outputs. A rerun on the same audio then takes a few seconds. |
 | `--anchor` | `prev-end` | Chunk start at the end of the previous sound (`prev-end`) or at the attack itself (`attack`). |
 

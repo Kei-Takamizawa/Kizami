@@ -272,7 +272,7 @@ def _fake_mms(monkeypatch):
 
     size = len(torchaudio.pipelines.MMS_FA.get_dict(star="*"))
 
-    def fake(audio, model_file, key=None):
+    def fake(audio, model_file, key=None, device="cpu"):
         n = (len(audio) - 400) // 320 + 1
         rng = np.random.default_rng(1)
         x = rng.standard_normal((n, size)).astype(np.float32)

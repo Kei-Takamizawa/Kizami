@@ -44,6 +44,26 @@ def mms_model_key(model_file: Path) -> str:
     return fingerprint(Path(model_file).stat().st_size)
 
 
+DEVICES = ("auto", "cpu", "cuda")
+
+
+def resolve_device(device: str = "auto") -> str:
+    """The torch device to run the models on: ``"cuda"`` (an NVIDIA GPU) or ``"cpu"``.
+    ``"auto"`` takes the GPU when there is one. Raises ``ValueError`` for an unknown
+    device or ``"cuda"`` without a usable GPU."""
+    if device not in DEVICES:
+        raise ValueError(f"device must be auto, cpu or cuda, not {device!r}")
+    if device == "cpu":
+        return "cpu"
+    import torch
+
+    if torch.cuda.is_available():
+        return "cuda"
+    if device == "cuda":
+        raise ValueError("no CUDA GPU is available to torch here; use --device cpu or auto")
+    return "cpu"
+
+
 def _run_pieces(audio: np.ndarray, forward) -> np.ndarray:
     """Log-probabilities per frame for the whole track, model run in pieces with context."""
     import torch
@@ -54,7 +74,7 @@ def _run_pieces(audio: np.ndarray, forward) -> np.ndarray:
     with torch.no_grad():
         for s in range(0, len(audio), piece):
             a, b = max(0, s - ctx), min(len(audio), s + piece + ctx)
-            lp = torch.log_softmax(forward(audio[a:b]), dim=-1).numpy()
+            lp = torch.log_softmax(forward(audio[a:b]).float(), dim=-1).cpu().numpy()
             f0 = (s - a) // STRIDE
             outs.append(lp[f0 : f0 + min(piece, len(audio) - s) // STRIDE])
     return np.concatenate(outs)[:n_frames]
@@ -71,10 +91,13 @@ def _normalizes(model_dir: Path) -> bool:
         return True
 
 
-def w2v2_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None, normalize: bool | None = None) -> np.ndarray:
+def w2v2_emissions(
+    audio: np.ndarray, model_dir: Path, key: Path | None = None, normalize: bool | None = None, device: str = "cpu"
+) -> np.ndarray:
     """Per 20 ms frame, log-probabilities of every token of a Hugging Face wav2vec2 CTC
     model (only ``model.safetensors`` is read). ``key``: cache file. ``normalize``: scale the
-    audio to zero mean and unit variance first; None reads ``do_normalize`` of the model."""
+    audio to zero mean and unit variance first; None reads ``do_normalize`` of the model.
+    ``device``: ``"cpu"`` or ``"cuda"`` (see ``resolve_device``)."""
     if key is not None and key.exists():
         return np.load(key)
     import torch
@@ -83,14 +106,14 @@ def w2v2_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None, 
 
     hf_logging.set_verbosity_error()
     hf_logging.disable_progress_bar()
-    model = Wav2Vec2ForCTC.from_pretrained(str(model_dir), use_safetensors=True).eval()
+    model = Wav2Vec2ForCTC.from_pretrained(str(model_dir), use_safetensors=True).to(device).eval()
     if normalize is None:
         normalize = _normalizes(model_dir)
 
     def forward(x):
         if normalize:
             x = (x - x.mean()) / (x.std() + 1e-7)
-        return model(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))[None]).logits[0]
+        return model(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))[None].to(device)).logits[0]
 
     em = _run_pieces(audio, forward)
     if key is not None:
@@ -99,9 +122,9 @@ def w2v2_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None, 
     return em
 
 
-def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None) -> np.ndarray:
+def kana_emissions(audio: np.ndarray, model_dir: Path, key: Path | None = None, device: str = "cpu") -> np.ndarray:
     """``w2v2_emissions`` of the kana model, which always gets normalized audio."""
-    return w2v2_emissions(audio, model_dir, key, normalize=True)
+    return w2v2_emissions(audio, model_dir, key, normalize=True, device=device)
 
 
 def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
@@ -141,18 +164,19 @@ def ctc_align(em: np.ndarray, atoms: list[dict], vocab: dict) -> int:
     return len(ids)
 
 
-def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None) -> np.ndarray:
-    """Per 20 ms frame, log-probabilities of the MMS letters (model file read from disk, never downloaded)."""
+def mms_emissions(audio: np.ndarray, model_file: Path, key: Path | None = None, device: str = "cpu") -> np.ndarray:
+    """Per 20 ms frame, log-probabilities of the MMS letters (model file read from disk, never downloaded).
+    ``device``: ``"cpu"`` or ``"cuda"``."""
     if key is not None and key.exists():
         return np.load(key)
     import torch
     import torchaudio
 
     bundle = torchaudio.pipelines.MMS_FA
-    model = bundle.get_model(with_star=True, dl_kwargs={"model_dir": str(Path(model_file).parent)}).eval()
+    model = bundle.get_model(with_star=True, dl_kwargs={"model_dir": str(Path(model_file).parent)}).to(device).eval()
 
     def forward(x):
-        return model(torch.from_numpy(x)[None])[0][0]
+        return model(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32))[None].to(device))[0][0]
 
     em = _run_pieces(audio, forward).astype(np.float32)
     if key is not None:

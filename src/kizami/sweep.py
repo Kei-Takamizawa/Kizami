@@ -34,11 +34,7 @@ def parse_param(text: str) -> tuple[str, list[float]]:
     return name, [float(x) for x in spec.split(",") if x.strip()]
 
 
-def main(argv: list[str] | None = None) -> None:
-    from kizami.evaluate import combine_results, evaluate_pair
-    from kizami.generate import generate
-    from kizami.timing import load_document
-
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="python -m kizami.sweep", description=__doc__.splitlines()[0])
     ap.add_argument("songs", nargs="+", help="song folders with vocals.wav, lyrics.txt and ref.json")
     ap.add_argument("--model-dir", required=True)
@@ -48,6 +44,16 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--anchor", default="prev-end", choices=["prev-end", "attack"])
     ap.add_argument("--latin", default="auto", choices=["auto", "en", "es"])
     ap.add_argument("--tolerance", type=int, default=50, help="ms")
+    ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"], help="where the models run")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> None:
+    from kizami.evaluate import combine_results, evaluate_pair
+    from kizami.generate import generate
+    from kizami.timing import load_document
+
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     grid = [parse_param(p) for p in args.param]
@@ -59,7 +65,7 @@ def main(argv: list[str] | None = None) -> None:
         for song in args.songs:
             with tempfile.TemporaryDirectory() as out:
                 generate(song, model_dir=args.model_dir, out_dir=out, levels=[args.level], kanji="keep",
-                         cache=args.cache, params=params, latin=args.latin)  # fmt: skip
+                         cache=args.cache, params=params, latin=args.latin, device=args.device)  # fmt: skip
                 hyp = load_document(Path(out) / f"auto_{args.level}.json")
             results.append(evaluate_pair(load_document(Path(song) / "ref.json"), hyp, args.tolerance))
         r = combine_results(results)

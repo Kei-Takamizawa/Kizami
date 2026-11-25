@@ -88,6 +88,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     gen.add_argument("--cache", help="folder to keep model outputs in, so a rerun is fast")
     gen.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="where the models run: auto uses an NVIDIA GPU when torch sees one (default), else the CPU",
+    )
+    gen.add_argument(
         "--anchor",
         default="prev-end",
         choices=["prev-end", "attack"],
@@ -418,6 +424,7 @@ def _run_generate(args: argparse.Namespace) -> None:
             latin=args.latin,
             mms=args.mms,
             cache=args.cache,
+            device=args.device,
             params={"anchor": args.anchor},
             progress=lambda message: print(f"{message} ...", file=sys.stderr, flush=True),
         )

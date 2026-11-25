@@ -116,6 +116,7 @@ def generate(
     params: dict | None = None,
     progress: Callable[[str], None] | None = None,
     latin: str = "auto",
+    device: str = "auto",
 ) -> GenerateResult:
     """Write timing and label files for one song. See the module docstring.
 
@@ -131,7 +132,8 @@ def generate(
     ``latin`` is the language of Latin-script lyrics: ``"en"``, ``"es"`` or
     ``"auto"`` (guessed from the words). Lyrics in Korean, English or Spanish
     need the letter model (``mms_fa/model.pt``); the kana model is needed only
-    when the lyrics have Japanese.
+    when the lyrics have Japanese. ``device`` is where the models run: ``"auto"``
+    (an NVIDIA GPU if torch sees one, else the CPU), ``"cpu"`` or ``"cuda"``.
     """
     say = progress or (lambda message: None)
     levels = list(levels)
@@ -176,6 +178,13 @@ def generate(
     missing = missing_modules()
     if missing:
         raise GenerateError(f'missing Python packages: {", ".join(missing)}. Install them with: pip install "kizami[generate]"')
+
+    from kizami.generate import align as _align
+
+    try:
+        run_on = _align.resolve_device(device)
+    except ValueError as exc:
+        raise GenerateError(str(exc)) from exc
 
     import json
     import warnings
@@ -236,7 +245,7 @@ def generate(
             say("aligning the lyrics (kana model)")
             key = Path(f"{audio_key}-kana-{align.kana_model_key(kana_dir)}.npy") if audio_key else None
             try:
-                em = align.kana_emissions(pcm16k, kana_dir, key)
+                em = align.kana_emissions(pcm16k, kana_dir, key, device=run_on)
             except (OSError, ValueError) as exc:
                 raise GenerateError(f"the kana model could not be loaded from {kana_dir} ({exc})") from exc
             try:
@@ -250,7 +259,7 @@ def generate(
             say("aligning the lyrics (letter model)" if has_other else "aligning the lyrics (second model)")
             key = Path(f"{audio_key}-mms-{align.mms_model_key(mms_file)}.npy") if audio_key else None
             try:
-                em2 = align.mms_emissions(pcm16k, mms_file, key)
+                em2 = align.mms_emissions(pcm16k, mms_file, key, device=run_on)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise GenerateError(f"the second model could not be loaded from {mms_file} ({exc})") from exc
             if p["mms_silence"] > 0:  # keep the lyrics out of silent stretches of the vocals
@@ -270,7 +279,7 @@ def generate(
                 raise GenerateError(f"the {lang} model could not be read from {own_dir} ({exc})") from exc
             key = Path(f"{audio_key}-w2v2-{lang}-{align.w2v2_model_key(own_dir)}.npy") if audio_key else None
             try:
-                em3 = align.w2v2_emissions(pcm16k, own_dir, key)
+                em3 = align.w2v2_emissions(pcm16k, own_dir, key, device=run_on)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise GenerateError(f"the {lang} model could not be loaded from {own_dir} ({exc})") from exc
             em3 = dedicated.with_star(em3, blank)
