@@ -21,6 +21,7 @@ Nothing is sent to the internet. See ``docs/app.md``.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import http.client
 import json
@@ -39,7 +40,7 @@ from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from kizami.ttml import MAX_OFFSET_MS, TtmlError, TtmlOutput, load_for_export, render_ttml
@@ -60,6 +61,8 @@ STALE_UPLOAD_S = 3600  # leftovers older than this are removed when the app star
 RUNNING = ".app-running.json"  # in the work folder, readable by its owner only: the page address of the running app
 DEFAULT_LAUNCHER = "~/Desktop/Kizami.command"
 _LAUNCHER_MARK = "# Kizami app launcher"
+REMOTE_TAGGERS = 10  # over SSH, taggers use the ports right after the app's, so the launcher can forward them
+_SSH_HOST = re.compile(r"^(?:[A-Za-z0-9._-]+@)?[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 _INDEX_PATH = Path(__file__).with_name("index.html")
 _JOB_PATH = re.compile(r"^/api/jobs/([A-Za-z0-9_-]{8,64})(/ttml|/tagger)?$")
@@ -410,13 +413,35 @@ def run_pipeline(job: Job, upload: Upload, options: dict, app: App) -> None:
     app.write_ttml(job, job.offset_ms, use_tagger=False)
 
 
-def start_tagger(folder: Path) -> str:
-    """Start the tagger for a song folder on a free port, in this process. Return its address."""
+def bind_first(ports: Iterable[int], make: Callable[[int], ThreadingHTTPServer]) -> ThreadingHTTPServer:
+    """The server from ``make`` on the first of ``ports`` that is free. Raises ``AppError`` when none is."""
+    tried = []
+    for port in ports:
+        try:
+            return make(port)
+        except OSError:
+            tried.append(port)
+    span = f"{tried[0]}-{tried[-1]}" if len(tried) > 1 else str(tried[0]) if tried else "none"
+    raise AppError(f"the tagger ports ({span}) are all in use. Restart the app to free them.")
+
+
+def remote_tagger_ports(port: int) -> range:
+    """The ports the taggers use when the app runs for a browser on another computer (``--remote``)."""
+    if not 0 < port <= 65535 - REMOTE_TAGGERS:
+        raise AppError(f"the app port must be between 1 and {65535 - REMOTE_TAGGERS} with --remote, not {port}")
+    return range(port + 1, port + 1 + REMOTE_TAGGERS)
+
+
+def start_tagger(folder: Path, ports: Iterable[int] | None = None) -> str:
+    """Start the tagger for a song folder in this process and return its address.
+
+    It takes a free port, or the first free one of ``ports`` when given.
+    """
     from kizami.tagger import Session, create_server, page_url
 
     # The tagger opens its saved work (tagger.json) when there is one, else the timing file.
     session = Session(folder, labels=TIMING)
-    server = create_server(session, 0)
+    server = create_server(session, 0) if ports is None else bind_first(ports, lambda p: create_server(session, p))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return page_url(server, session)
 
@@ -639,13 +664,23 @@ def make_launcher(
     work_dir: str | Path,
     port: int = DEFAULT_PORT,
     python: str = sys.executable,
+    ssh_host: str | None = None,
 ) -> Path:
     """Write a file that starts the app when it is opened (double-click on a Mac), and return its path.
 
     The file runs this Python with this Kizami, so it keeps working after the
     terminal that made it is closed. A file at ``path`` that is not a Kizami
     launcher is never replaced.
+
+    With ``ssh_host``, the file is for another computer, the one with the
+    browser, that reaches this computer as ``ssh_host`` (a name from its
+    ``~/.ssh/config``, or ``user@host``). Opened there, it connects with SSH,
+    forwards the app port and the tagger ports to the same ports there, starts
+    the app here with ``--remote``, and opens the page there. The song and the
+    lyrics travel inside the SSH connection only.
     """
+    if ssh_host is not None and not _SSH_HOST.fullmatch(ssh_host):
+        raise AppError(f"the SSH host must be a plain host name or user@host, not {ssh_host!r}")
     path = Path(path).expanduser()
     model = Path(model_dir).expanduser().resolve()
     work = Path(work_dir).expanduser().resolve()
@@ -666,6 +701,12 @@ def make_launcher(
     for folder in ([str(Path(ffmpeg).parent)] if ffmpeg else []) + ["/opt/homebrew/bin", "/usr/local/bin"]:
         if folder not in paths:
             paths.append(folder)
+    if ssh_host is not None:
+        text = _ssh_launcher(ssh_host, paths, [python, "-m", "kizami", "app", "--remote", "--model-dir", str(model),
+                                               "--work-dir", str(work), "--port", str(port)], port)  # fmt: skip
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o755)
+        return path
     command = [python, "-m", "kizami", "app", "--model-dir", str(model), "--work-dir", str(work)]
     if port != DEFAULT_PORT:
         command += ["--port", str(port)]
@@ -685,32 +726,84 @@ def make_launcher(
     return path
 
 
+def _ssh_launcher(host: str, paths: list[str], command: list[str], port: int) -> str:
+    """The launcher text for the computer with the browser (see ``make_launcher``)."""
+    remote = f"export PATH={shlex.quote(':'.join(paths))}:\"$PATH\"; exec " + " ".join(shlex.quote(c) for c in command)
+    ports = [port, *remote_tagger_ports(port)]
+    forwards = " ".join(f"-L {p}:127.0.0.1:{p}" for p in ports)
+    page = rf"^Open (http://127\.0\.0\.1:{port}/\?t=[A-Za-z0-9_-]+)$"
+    return "\n".join(
+        [
+            "#!/bin/bash",
+            f"{_LAUNCHER_MARK}, made by: kizami app --make-launcher --ssh",
+            f"# Opening this file connects to {host} with SSH, starts the Kizami app there",
+            "# and opens its page in the browser here. The song and the lyrics travel",
+            "# inside the SSH connection only.",
+            "# Keep the window open while you use the app. Close it to stop the app.",
+            "set -o pipefail",
+            f"host={shlex.quote(host)}",
+            f"remote={shlex.quote(remote)}",
+            f"page={shlex.quote(page)}",
+            "opener=xdg-open",
+            '[ "$(uname)" = Darwin ] && opener=open',
+            "ssh -tt -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \\",
+            f'    {forwards} -- "$host" "$remote" |',
+            "while IFS= read -r line; do",
+            "    line=${line%$'\\r'}",
+            "    printf '%s\\n' \"$line\"",
+            '    if [[ $line =~ $page ]]; then "$opener" "${BASH_REMATCH[1]}" >/dev/null 2>&1; fi',
+            "done",
+            "",
+        ]
+    )
+
+
 def serve(
     *,
     work_dir: str | Path = DEFAULT_WORK_DIR,
     model_dir: str | Path | None = None,
     port: int = DEFAULT_PORT,
     open_browser: bool = True,
+    remote: bool = False,
 ) -> None:
     """Run the app until the user presses Ctrl+C.
 
     When an app already runs for this work folder, open its page instead of
     starting a second one.
+
+    ``remote``: the browser is on another computer that reaches this one
+    through SSH (see ``make_launcher``). No browser is opened here, the app
+    keeps ``port`` (an error when it is busy, since the forwarded ports are
+    fixed), and taggers use the ``REMOTE_TAGGERS`` ports after it.
     """
+    tagger_ports = remote_tagger_ports(port) if remote else None
     already = running_url(Path(work_dir).expanduser().resolve())
     if already:
+        if remote:
+            other = urlsplit(already).port
+            if other != port:
+                raise AppError(f"a Kizami app already runs for this work folder on port {other}. Stop it first.")
+            print("The Kizami app is already running here.")
+            print(f"Open {already}")
+            print("Keep this window open while you use it.")
+            _wait_until_stopped()
+            return
         print("The Kizami app is already running. Opening its page.")
         print(f"Open {already}")
         if open_browser:
             webbrowser.open(already)
         return
+    starter = functools.partial(start_tagger, ports=tagger_ports) if remote else None
     try:
-        app = App(work_dir, model_dir)
+        app = App(work_dir, model_dir, tagger_starter=starter)
     except OSError as exc:
         raise AppError(f"the work folder cannot be used: {exc}") from exc
     try:
         server = create_server(app, port)
     except OSError:
+        if remote:
+            app.close()
+            raise AppError(f"port {port} is in use on this computer. Stop what uses it, or choose another --port.") from None
         server = create_server(app, 0)  # the usual port is busy
     url = page_url(server, app)
     try:
@@ -722,7 +815,7 @@ def serve(
     print(f"Song folders are kept in {app.work_dir}. Press Ctrl+C, or close this window, to stop.")
     for problem in app.problems():
         print(f"warning: {problem}")
-    if open_browser:
+    if open_browser and not remote:
         webbrowser.open(url)
     try:
         server.serve_forever()
@@ -732,3 +825,11 @@ def serve(
         _clear_running(app.work_dir, url)
         server.server_close()
         app.close()
+
+
+def _wait_until_stopped() -> None:
+    """Block until Ctrl+C or a hang-up, so an SSH tunnel to an app that already runs stays open."""
+    try:
+        threading.Event().wait()
+    except KeyboardInterrupt:
+        print("\nStopped.")

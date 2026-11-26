@@ -40,7 +40,9 @@ kizami app --model-dir path/to/models
 
 On a Mac, `kizami app --make-launcher --model-dir path/to/models` puts a
 `Kizami.command` file on the Desktop: after that, a double-click (or one click
-in the Dock) opens the app.
+in the Dock) opens the app. The app can also run on another computer, such as
+a server with a GPU, and be used from your laptop's browser over SSH (see
+[the app guide](docs/app.md#process-songs-on-another-computer)).
 
 You need the `ffmpeg` program and the timing models, downloaded once: the
 Japanese model (about 1.3 GB) for Japanese lyrics, and the letter model (about

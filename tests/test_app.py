@@ -496,3 +496,182 @@ def test_the_app_tells_where_it_runs_while_it_runs(tmp_path, monkeypatch):
     servers[0].shutdown()
     thread.join(5)
     assert not (work / RUNNING).exists()
+
+
+# -- the app on another computer, used over SSH --------------------------------
+
+
+def _free_ports(n):
+    import socket
+
+    socks = [socket.socket() for _ in range(n)]
+    for s in socks:
+        s.bind(("127.0.0.1", 0))
+    ports = [s.getsockname()[1] for s in socks]
+    for s in socks:
+        s.close()
+    return ports
+
+
+def _plain_server(port):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    return ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
+
+
+def test_a_tagger_takes_the_first_free_port_of_its_list():
+    from kizami.app import bind_first
+
+    busy, free = _free_ports(2)
+    blocker = _plain_server(busy)
+    try:
+        server = bind_first([busy, free], _plain_server)
+        assert server.server_address[1] == free
+        server.server_close()
+    finally:
+        blocker.server_close()
+
+
+def test_no_free_tagger_port_is_a_clear_error():
+    from kizami.app import bind_first
+
+    (busy,) = _free_ports(1)
+    blocker = _plain_server(busy)
+    try:
+        with pytest.raises(AppError, match=f"{busy}.*in use"):
+            bind_first([busy], _plain_server)
+    finally:
+        blocker.server_close()
+
+
+def test_over_ssh_the_taggers_use_the_ten_ports_after_the_app():
+    from kizami.app import remote_tagger_ports
+
+    assert list(remote_tagger_ports(8766)) == list(range(8767, 8777))
+    with pytest.raises(AppError, match="port"):
+        remote_tagger_ports(65530)
+
+
+def test_over_ssh_the_app_keeps_its_port_and_opens_no_browser(tmp_path, monkeypatch):
+    from kizami.app import serve
+
+    (busy,) = _free_ports(1)
+    blocker = _plain_server(busy)
+    opened = []
+    monkeypatch.setattr(app_module.webbrowser, "open", opened.append)
+    try:
+        with pytest.raises(AppError, match=f"{busy}.*in use"):
+            serve(work_dir=tmp_path / "w", port=busy, remote=True)
+    finally:
+        blocker.server_close()
+    assert opened == []
+
+
+def test_over_ssh_the_app_starts_taggers_next_to_it(tmp_path, monkeypatch):
+    from kizami.app import serve
+
+    made = {}
+    real_app = app_module.App
+
+    def spy(*args, **kwargs):
+        made["app"] = real_app(*args, **kwargs)
+        return made["app"]
+
+    started = []
+    monkeypatch.setattr(app_module, "App", spy)
+    monkeypatch.setattr(app_module, "start_tagger", lambda folder, ports=None: started.append(list(ports)) or "x")
+    monkeypatch.setattr(app_module.ThreadingHTTPServer, "serve_forever", lambda self: None)
+    (port,) = _free_ports(1)
+    serve(work_dir=tmp_path / "w", port=port, remote=True)
+    made["app"]._tagger_starter(tmp_path)
+    assert started == [list(range(port + 1, port + 11))]
+
+
+def test_over_ssh_a_second_start_keeps_the_connection_to_the_running_app(running, monkeypatch):
+    from kizami.app import _write_running, serve
+
+    app, port = running
+    _write_running(app.work_dir, f"http://127.0.0.1:{port}/?t={app.token}")
+    waited, opened = [], []
+    monkeypatch.setattr(app_module, "_wait_until_stopped", lambda: waited.append(True))
+    monkeypatch.setattr(app_module.webbrowser, "open", opened.append)
+
+    serve(work_dir=app.work_dir, port=port, remote=True)
+    assert waited == [True] and opened == []
+    with pytest.raises(AppError, match=str(port)):
+        serve(work_dir=app.work_dir, port=port + 1, remote=True)
+
+
+def _fake_tools(folder, lines):
+    """An ``ssh`` that logs its arguments and prints ``lines``, and openers that log what they open."""
+    import shlex
+
+    folder.mkdir()
+    printed = "".join(f"printf '%s\\r\\n' {shlex.quote(line)}\n" for line in lines)
+    (folder / "ssh").write_text(f"#!/bin/bash\nprintf '%s\\n' \"$@\" > '{folder}/ssh.args'\n{printed}", encoding="utf-8")
+    for name in ("open", "xdg-open"):
+        (folder / name).write_text(f"#!/bin/bash\nprintf '%s\\n' \"$1\" >> '{folder}/opened'\n", encoding="utf-8")
+    for tool in folder.iterdir():
+        tool.chmod(0o755)
+
+
+def test_ssh_launcher_starts_the_app_there_and_opens_only_its_page_here(tmp_path):
+    import shlex
+    import subprocess
+
+    from kizami.app import make_launcher
+
+    models = tmp_path / "my models"
+    models.mkdir()
+    page = "http://127.0.0.1:9100/?t=Ab_c-1"
+    _fake_tools(
+        tmp_path / "bin",
+        ["Kizami app", f"Open {page}", "Open http://evil.example/?t=x", "Open http://127.0.0.1:9100/?t=a;b", "Stopped."],
+    )
+    path = make_launcher(tmp_path / "Kizami.command", model_dir=models, work_dir=tmp_path / "songs",
+                         port=9100, python="/srv/py thon", ssh_host="dev@gpu-box.local")  # fmt: skip
+
+    assert os.access(path, os.X_OK)
+    assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
+    env = dict(os.environ, PATH=f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    run = subprocess.run(["bash", str(path)], env=env, capture_output=True, text=True, timeout=10)
+    assert run.returncode == 0
+    assert "Stopped." in run.stdout
+    assert (tmp_path / "bin" / "opened").read_text().splitlines() == [page]
+
+    args = (tmp_path / "bin" / "ssh.args").read_text().splitlines()
+    forwards = [args[i + 1] for i, a in enumerate(args) if a == "-L"]
+    assert forwards == [f"{p}:127.0.0.1:{p}" for p in range(9100, 9111)]
+    assert args[-3:-1] == ["--", "dev@gpu-box.local"]
+    export, start = args[-1].split("; ", 1)
+    assert export.startswith("export PATH=")
+    assert shlex.split(start) == ["exec", "/srv/py thon", "-m", "kizami", "app", "--remote",
+                                  "--model-dir", str(models.resolve()), "--work-dir",
+                                  str((tmp_path / "songs").resolve()), "--port", "9100"]  # fmt: skip
+
+
+@pytest.mark.parametrize("host", ["-oProxyCommand=touch x", "gpu box", "", "a;b", "pro\n"])
+def test_ssh_launcher_refuses_a_host_that_is_not_a_plain_name(tmp_path, host):
+    from kizami.app import make_launcher
+
+    with pytest.raises(AppError, match="host"):
+        make_launcher(tmp_path / "k.command", model_dir=tmp_path, work_dir=tmp_path, ssh_host=host)
+    assert not (tmp_path / "k.command").exists()
+
+
+def test_cli_makes_an_ssh_launcher_and_starts_the_app_for_ssh(tmp_path, capsys, monkeypatch):
+    from kizami.cli import main
+
+    calls = []
+    monkeypatch.setattr(app_module, "serve", lambda **kw: calls.append(kw))
+    target = tmp_path / "Kizami.command"
+    assert main(["app", "--make-launcher", str(target), "--model-dir", str(tmp_path), "--ssh", "gpu-box"]) == 0
+    text = target.read_text(encoding="utf-8")
+    assert "gpu-box" in text and "--remote" in text
+    assert "copy it to the computer" in capsys.readouterr().out
+
+    assert main(["app", "--ssh", "gpu-box"]) == 2
+    assert "--make-launcher" in capsys.readouterr().err
+
+    assert main(["app", "--remote", "--model-dir", str(tmp_path)]) == 0
+    assert calls[-1]["remote"] is True and calls[-1]["open_browser"] is False

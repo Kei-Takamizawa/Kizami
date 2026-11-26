@@ -238,6 +238,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="instead of starting the app, make a file that starts it when you double-click it "
         "(default ~/Desktop/Kizami.command; keeps --model-dir, --work-dir and --port)",
     )
+    app.add_argument(
+        "--ssh",
+        metavar="HOST",
+        help="with --make-launcher: make the file for another computer, the one with the browser, that reaches "
+        "this one by SSH as HOST; the songs are then processed here",
+    )
+    app.add_argument(
+        "--remote",
+        action="store_true",
+        help="the browser is on another computer that connects by SSH (the --ssh launcher adds this): "
+        "open no browser here, keep the port, and start taggers on the next 10 ports",
+    )
 
     tagger = commands.add_parser(
         "tagger",
@@ -493,19 +505,27 @@ def _run_app(args: argparse.Namespace) -> None:
     from kizami.app import DEFAULT_LAUNCHER, AppError, make_launcher
     from kizami.app import serve as serve_app
 
+    if args.ssh is not None and args.make_launcher is None:
+        raise CliError("--ssh only works with --make-launcher")
     if args.make_launcher is not None:
         if not args.model_dir:
             raise CliError(f"give --model-dir (or set {MODEL_DIR_ENV}) so that the launcher knows the model folder")
         try:
             path = make_launcher(args.make_launcher or DEFAULT_LAUNCHER, model_dir=args.model_dir,
-                                 work_dir=args.work_dir, port=args.port)  # fmt: skip
+                                 work_dir=args.work_dir, port=args.port, ssh_host=args.ssh)  # fmt: skip
         except AppError as exc:
             raise CliError(str(exc)) from exc
         print(f"Made {path}")
-        print("Double-click it to open the Kizami app. For one click, drag it to the right end of the Dock.")
+        if args.ssh is not None:
+            print("Now copy it to the computer with the browser, for example there with:")
+            print(f"    scp {args.ssh}:{path} ~/Desktop/")
+            print("Double-click it there to open the app. The songs are processed on this computer.")
+        else:
+            print("Double-click it to open the Kizami app. For one click, drag it to the right end of the Dock.")
         return
     try:
-        serve_app(work_dir=args.work_dir, model_dir=args.model_dir, port=args.port, open_browser=not args.no_browser)
+        serve_app(work_dir=args.work_dir, model_dir=args.model_dir, port=args.port,
+                  open_browser=not (args.no_browser or args.remote), remote=args.remote)  # fmt: skip
     except AppError as exc:
         raise CliError(str(exc)) from exc
 
