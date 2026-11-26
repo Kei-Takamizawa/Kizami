@@ -50,6 +50,8 @@ opens its page again.
 | `--port` | 8766 | Port of the page on this computer. Another free port is used if it is busy. |
 | `--no-browser` | | Print the page address but do not open the browser. |
 | `--make-launcher [FILE]` | `~/Desktop/Kizami.command` | Do not start the app: make a file that starts it (see below). |
+| `--ssh HOST` | | With `--make-launcher`: make the file for another computer that reaches this one by SSH (see [Process songs on another computer](#process-songs-on-another-computer)). |
+| `--remote` | | The browser is on another computer that connects by SSH. Opens no browser, keeps `--port` (an error if it is busy), and starts the tagger on one of the next 10 ports. The `--ssh` launcher adds this. |
 
 ## Open the app with one click (Mac)
 
@@ -71,6 +73,48 @@ there.
   again.
 - The launcher keeps the model folder, the work folder and the Python that
   made it. Make it again if you move one of them.
+
+## Process songs on another computer
+
+The app can run on another computer, for example a server with an NVIDIA
+GPU, while you use it from the browser of your laptop. The laptop then needs
+no Python, no models and no Kizami: only SSH and a browser.
+
+1. Set up Kizami on the server as above (on Ubuntu,
+   [`scripts/setup-ubuntu.sh`](../scripts/setup-ubuntu.sh) does it), with
+   `pip install -e ".[app]"` for Demucs.
+2. On the laptop, make sure `ssh myserver` logs in without a password prompt
+   (an SSH key, and a `Host myserver` entry in `~/.ssh/config`).
+3. On the server, make a launcher for the laptop and copy it there:
+
+   ```
+   kizami app --make-launcher ~/Kizami.command --ssh myserver --model-dir path/to/models --work-dir ~/kizami-songs
+   ```
+
+   ```
+   scp myserver:Kizami.command ~/Desktop/       # on the laptop
+   ```
+
+4. Double-click `Kizami.command` on the laptop. It connects to the server,
+   starts the app there, and opens the page in the laptop's browser.
+
+How it works and what to know:
+
+- The launcher forwards port 8766 (the page) and ports 8767 to 8776 (the
+  tagger, one port per song you check) from the laptop to the same ports on
+  the server, through SSH. Nothing listens on the network: the app on the
+  server answers only on its own loopback address, and the forwarded ports on
+  the laptop answer only on the laptop's loopback address.
+- The song file and the lyrics go to the server, inside the SSH connection
+  only. The song folders stay on the server, in the work folder.
+- Keep the Terminal window open while you use the app. Closing it stops the
+  app on the server; a song that was being processed then has to be started
+  again (its separated voice is kept, so that part is not repeated).
+- If the connection drops, for example when the laptop sleeps, double-click
+  the launcher again. It connects to the app if the app still runs on the
+  server, and starts it again if not.
+- Measured on a server with an RTX 4060 Ti, timing a song took about
+  5 to 10 seconds (see [Generating timing](generate.md#models)).
 
 ## Make a TTML file
 
