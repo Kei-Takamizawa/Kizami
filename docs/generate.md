@@ -84,9 +84,16 @@ models (2.6 GB). It can be run again at any time and skips what is in place.
 
 The models run on an NVIDIA GPU when torch sees one, else on the CPU
 (`--device auto`, the default; `--device cpu` or `--device cuda` to choose).
-Demucs, which separates the voice, also chooses a GPU by itself. Results on
-the GPU can differ from the CPU in rare starts, because the numbers are
-rounded differently.
+Demucs, which separates the voice, also chooses a GPU by itself. The GPU
+rounds numbers differently, so its model outputs are not bit-for-bit the same
+as the CPU's, and a start could in principle move. On the 144 test songs
+(Japanese, English, Spanish and Korean) no start moved.
+
+Measured on one machine (NVIDIA RTX 4060 Ti 8 GB against the same machine's
+16-core CPU, first run without a cache, model loading included): an English or
+Spanish song took about 5 seconds on the GPU and about 50 seconds on the CPU,
+a Japanese song about 10 against 65 seconds, and a short Korean recording
+about 2 against 10 seconds. The GPU used at most 3 GB of its memory.
 
 ### Dedicated models for English and Spanish (optional)
 
