@@ -28,6 +28,10 @@ Models are read from ``model_dir`` and never downloaded:
 * ``mms_fa/model.pt``: the torchaudio MMS_FA forced-alignment model.
   Optional, used where the first model is unsure. Check its licence before
   any commercial use.
+* ``w2v2-en/``, ``w2v2-es/``, ``w2v2-ko/``: dedicated English, Spanish and
+  Korean wav2vec2 CTC models in the same format as the kana model. Optional:
+  English and Spanish are used when their folder is there (parameters
+  ``w2v_en``, ``w2v_es``, ``w2v_ko``); see ``kizami.generate.dedicated``.
 
 The heavy parts (numpy, torch, torchaudio, transformers, SudachiPy) and the
 ``ffmpeg`` program are needed: ``pip install "kizami[generate]"``.
@@ -43,6 +47,7 @@ from typing import Callable, Iterable
 LEVELS = ("dai", "chu", "sho")
 DEFAULT_LEVELS = ("chu",)
 KANJI_MODES = ("auto", "hiragana", "keep")
+LATIN_MODES = ("auto", "en", "es")
 KANA_MODEL = "w2v2-hiragana"
 MMS_MODEL = Path("mms_fa") / "model.pt"
 REQUIRED_MODULES = {
@@ -80,7 +85,10 @@ class GenerateResult:
     kanji_kept_whole: int
     used_second_aligner: bool
     start_rules: dict[str, int]
+    languages: dict[str, int] = field(default_factory=dict)  # units per language (ja, ko, en, es)
+    latin: str = "en"  # the language taken for Latin-script lyrics
     levels: list[LevelResult] = field(default_factory=list)
+    dedicated: list[str] = field(default_factory=list)  # languages timed by their dedicated model
 
 
 def missing_modules() -> list[str]:
@@ -107,6 +115,8 @@ def generate(
     cache: str | Path | None = None,
     params: dict | None = None,
     progress: Callable[[str], None] | None = None,
+    latin: str = "auto",
+    device: str = "auto",
 ) -> GenerateResult:
     """Write timing and label files for one song. See the module docstring.
 
@@ -119,6 +129,11 @@ def generate(
     model outputs are kept, so a second run on the same audio is fast.
     ``params`` overrides values of ``kizami.generate.place.DEFAULTS``.
     ``progress`` receives a short message before each slow step.
+    ``latin`` is the language of Latin-script lyrics: ``"en"``, ``"es"`` or
+    ``"auto"`` (guessed from the words). Lyrics in Korean, English or Spanish
+    need the letter model (``mms_fa/model.pt``); the kana model is needed only
+    when the lyrics have Japanese. ``device`` is where the models run: ``"auto"``
+    (an NVIDIA GPU if torch sees one, else the CPU), ``"cpu"`` or ``"cuda"``.
     """
     say = progress or (lambda message: None)
     levels = list(levels)
@@ -129,6 +144,8 @@ def generate(
         raise GenerateError(f"kanji must be one of: {', '.join(KANJI_MODES)}")
     if mms not in ("auto", "on", "off"):
         raise GenerateError('mms must be "auto", "on" or "off"')
+    if latin not in LATIN_MODES:
+        raise GenerateError(f"latin must be one of: {', '.join(LATIN_MODES)}")
     if folder is None and (vocals is None or lyrics is None):
         raise GenerateError("give a song folder, or both the vocal track and the lyrics file")
     base = Path(folder) if folder is not None else None
@@ -137,21 +154,42 @@ def generate(
     out = Path(out_dir) if out_dir else (base if base is not None else vocals_path.parent)
     model_root = Path(model_dir)
     kana_dir = model_root / KANA_MODEL
-    for name in ("vocab.json", "config.json", "model.safetensors"):
-        _need_file(kana_dir / name, f"kana model (w2v2-hiragana/{name} in the model folder)")
+
+    from kizami.generate import text
+
+    try:
+        lines = text.parse_lyrics(lyrics_path)
+    except UnicodeDecodeError as exc:
+        raise GenerateError(f"{lyrics_path}: not UTF-8 text ({exc})") from exc
+    scripts = {x for line in lines for x in text._line_scripts(line) if x}
+    has_other = bool(scripts - {"ja"})
+    has_japanese = "ja" in scripts or not has_other
+    if has_japanese:
+        for name in ("vocab.json", "config.json", "model.safetensors"):
+            _need_file(kana_dir / name, f"kana model (w2v2-hiragana/{name} in the model folder)")
     mms_file = model_root / MMS_MODEL
-    if mms == "on":
-        _need_file(mms_file, "second model (mms_fa/model.pt in the model folder)")
-    use_mms = mms == "on" or (mms == "auto" and mms_file.is_file())
+    if has_other and mms == "off":
+        raise GenerateError("lyrics in Korean, English or Spanish need the letter model: do not turn it off (--mms)")
+    if mms == "on" or has_other:
+        what = "letter model for Korean, English and Spanish" if has_other else "second model"
+        _need_file(mms_file, f"{what} (mms_fa/model.pt in the model folder)")
+    use_mms = mms == "on" or has_other or (mms == "auto" and mms_file.is_file())
 
     missing = missing_modules()
     if missing:
         raise GenerateError(f'missing Python packages: {", ".join(missing)}. Install them with: pip install "kizami[generate]"')
 
+    from kizami.generate import align as _align
+
+    try:
+        run_on = _align.resolve_device(device)
+    except ValueError as exc:
+        raise GenerateError(str(exc)) from exc
+
     import json
     import warnings
 
-    from kizami.generate import align, audio, place, text
+    from kizami.generate import align, audio, place
 
     p = dict(place.DEFAULTS)
     for key, value in (params or {}).items():
@@ -161,20 +199,34 @@ def generate(
     if p["anchor"] not in ("prev-end", "attack"):
         raise GenerateError('anchor must be "prev-end" or "attack"')
 
-    try:
-        vocab = json.loads((kana_dir / "vocab.json").read_text(encoding="utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise GenerateError(f"{kana_dir / 'vocab.json'}: not a JSON vocabulary ({exc})") from exc
-    if not isinstance(vocab, dict) or "[PAD]" not in vocab:
-        raise GenerateError(f"{kana_dir / 'vocab.json'}: no [PAD] token; is this the hiragana wav2vec2 model?")
+    vocab: dict = {}
+    if has_japanese:
+        try:
+            vocab = json.loads((kana_dir / "vocab.json").read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise GenerateError(f"{kana_dir / 'vocab.json'}: not a JSON vocabulary ({exc})") from exc
+        if not isinstance(vocab, dict) or "[PAD]" not in vocab:
+            raise GenerateError(f"{kana_dir / 'vocab.json'}: no [PAD] token; is this the hiragana wav2vec2 model?")
     say("reading the lyrics")
-    try:
-        lines = text.parse_lyrics(lyrics_path)
-    except UnicodeDecodeError as exc:
-        raise GenerateError(f"{lyrics_path}: not UTF-8 text ({exc})") from exc
-    atoms, kanji_whole = text.atoms_for(lines, vocab)
+    atoms, kanji_whole, latin_used = text.atoms_for(lines, vocab, latin=latin)
+    languages: dict[str, int] = {}
+    for a in atoms:
+        languages[a["lang"]] = languages.get(a["lang"], 0) + 1
+    with_japanese_units = languages.get("ja", 0) > 0
     if not any(a["kana"] for a in atoms):
         raise GenerateError(f"{lyrics_path}: no singable lyrics found")
+    from kizami.generate import dedicated
+
+    own_models = [
+        lang
+        for lang, name in dedicated.MODEL_DIRS.items()
+        if p[f"w2v_{lang}"] > 0 and languages.get(lang) and (model_root / name).is_dir()
+        and (p["w2v_mixed"] > 0 or set(languages) == {lang})
+    ]  # without its folder, or in a song with other languages (unless w2v_mixed), the letter model times it
+    for lang in own_models:
+        name = dedicated.MODEL_DIRS[lang]
+        for file in dedicated.MODEL_FILES:
+            _need_file(model_root / name / file, f"dedicated {lang} model ({name}/{file} in the model folder)")
 
     try:
         x, sr = audio.load_mono(vocals_path)
@@ -189,34 +241,65 @@ def generate(
             pcm16k = audio.load_16k(vocals_path)
         except audio.AudioError as exc:
             raise GenerateError(str(exc)) from exc
-        say("aligning the lyrics (kana model)")
-        key = Path(f"{audio_key}-kana-{align.kana_model_key(kana_dir)}.npy") if audio_key else None
-        try:
-            em = align.kana_emissions(pcm16k, kana_dir, key)
-        except (OSError, ValueError) as exc:
-            raise GenerateError(f"the kana model could not be loaded from {kana_dir} ({exc})") from exc
-        try:
-            align.ctc_align(em, atoms, vocab)
-        except RuntimeError as exc:
-            raise GenerateError(f"the lyrics could not be aligned to the audio ({exc}). Is it the right song?") from exc
+        if with_japanese_units:
+            say("aligning the lyrics (kana model)")
+            key = Path(f"{audio_key}-kana-{align.kana_model_key(kana_dir)}.npy") if audio_key else None
+            try:
+                em = align.kana_emissions(pcm16k, kana_dir, key, device=run_on)
+            except (OSError, ValueError) as exc:
+                raise GenerateError(f"the kana model could not be loaded from {kana_dir} ({exc})") from exc
+            try:
+                align.ctc_align(em, atoms, vocab)
+            except RuntimeError as exc:
+                raise GenerateError(f"the lyrics could not be aligned to the audio ({exc}). Is it the right song?") from exc
+        else:
+            for a in atoms:
+                a.update(rough=None, rough_last=None, conf=1.0, kana_starts=[])
         if use_mms:
-            say("aligning the lyrics (second model)")
+            say("aligning the lyrics (letter model)" if has_other else "aligning the lyrics (second model)")
             key = Path(f"{audio_key}-mms-{align.mms_model_key(mms_file)}.npy") if audio_key else None
             try:
-                em2 = align.mms_emissions(pcm16k, mms_file, key)
+                em2 = align.mms_emissions(pcm16k, mms_file, key, device=run_on)
             except (OSError, RuntimeError, ValueError) as exc:
                 raise GenerateError(f"the second model could not be loaded from {mms_file} ({exc})") from exc
+            if p["mms_silence"] > 0:  # keep the lyrics out of silent stretches of the vocals
+                em2 = align.mask_silence(em2, align.voiced_frames(pcm16k, len(em2)), p["mms_silence"])
             try:
-                align.mms_align(em2, atoms)
+                align.mms_align(em2, atoms, star=bool(p["mms_star"]))
             except RuntimeError as exc:
                 raise GenerateError(f"the second model could not align the lyrics ({exc})") from exc
+            align.adopt_mms(atoms)
+        voiced = None
+        for lang in own_models:
+            own_dir = model_root / dedicated.MODEL_DIRS[lang]
+            say(f"aligning the lyrics ({lang} model)")
+            try:
+                own_vocab, blank = dedicated.model_vocab(own_dir)
+            except (OSError, ValueError) as exc:
+                raise GenerateError(f"the {lang} model could not be read from {own_dir} ({exc})") from exc
+            key = Path(f"{audio_key}-w2v2-{lang}-{align.w2v2_model_key(own_dir)}.npy") if audio_key else None
+            try:
+                em3 = align.w2v2_emissions(pcm16k, own_dir, key, device=run_on)
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise GenerateError(f"the {lang} model could not be loaded from {own_dir} ({exc})") from exc
+            em3 = dedicated.with_star(em3, blank)
+            if p["w2v_silence"] > 0:
+                if voiced is None or len(voiced) != len(em3):
+                    voiced = align.voiced_frames(pcm16k, len(em3))
+                keep = (blank, own_vocab[dedicated.DELIM], -1) if dedicated.DELIM in own_vocab else (blank, -1)
+                em3 = align.mask_silence(em3, voiced, p["w2v_silence"], keep=keep)
+            try:
+                dedicated.align(em3, atoms, own_vocab, lang, blank, star=bool(p["w2v_star"]), margin=p["w2v_margin"])
+            except RuntimeError as exc:
+                raise GenerateError(f"the {lang} model could not align the lyrics ({exc})") from exc
+            dedicated.adopt(atoms, lang)
         say("finding the attacks")
         onsets, strengths, _ = audio.detect_attacks(x, sr)
         hiss, fps = audio.hiss_frames(x, sr)
         env, tt = audio.envelope(x, sr) if p["anchor"] == "prev-end" else (None, None)
     n_mms = place.place(atoms, onsets, strengths, p, hiss, fps, env, tt)
     place.place_morae(atoms, onsets, strengths, p, hiss, fps, env, tt)
-    p["m_thr"] = place.chu_threshold(atoms, p["m_share"])
+    p["m_thr"] = place.chu_thresholds(atoms, p["m_share"])
 
     timed = [a for a in atoms if a["time"] is not None]
     rules: dict[str, int] = {}
@@ -230,7 +313,15 @@ def generate(
         kanji_kept_whole=kanji_whole,
         used_second_aligner=use_mms,
         start_rules=dict(sorted(rules.items())),
+        languages=dict(sorted(languages.items())),
+        latin=latin_used,
+        dedicated=own_models,
     )
+    meta_extra = {"languages": result.languages}
+    if own_models:
+        meta_extra["dedicated_models"] = own_models
+    if languages.get("en") or languages.get("es"):
+        meta_extra["latin"] = latin_used
     if kanji in ("auto", "hiragana"):
         atoms = text.to_hiragana(lines, atoms)  # after the threshold, so the kanji's morae do not move it
     out.mkdir(parents=True, exist_ok=True)
@@ -239,7 +330,7 @@ def generate(
         shown, units, left = lines, atoms, 0
         if kanji == "auto":
             shown, units, chosen, left = text.kanji_unless_split(lines, atoms, chosen)
-        level_result = _write_level(out, level, shown, chosen, p, units, kanji)
+        level_result = _write_level(out, level, shown, chosen, p, units, kanji, meta_extra)
         level_result.kanji_in_hiragana = left
         result.levels.append(level_result)
     return result
@@ -249,7 +340,9 @@ def _ms(seconds: float) -> int:
     return max(0, int(round(seconds * 1000)))
 
 
-def _write_level(out: Path, level: str, lines, chosen, p, atoms=None, kanji: str = "keep") -> LevelResult:
+def _write_level(
+    out: Path, level: str, lines, chosen, p, atoms=None, kanji: str = "keep", meta_extra: dict | None = None
+) -> LevelResult:
     from kizami.audacity import label_text_from_document
     from kizami.generate.place import chunks_for
     from kizami.timing import Chunk, Line, Mora, TimingDocument, save_document
@@ -272,9 +365,14 @@ def _write_level(out: Path, level: str, lines, chosen, p, atoms=None, kanji: str
             )
     if not doc_lines:
         raise GenerateError("no chunk could be placed")
-    params = {k: (round(v, 6) if isinstance(v, float) else v) for k, v in p.items()}
-    doc = TimingDocument(lines=tuple(doc_lines), kind="generated",
-                         meta={"source": "kizami generate", "level": level, "kanji": kanji, "params": params})  # fmt: skip
+    def rounded(v):
+        if isinstance(v, dict):
+            return {k: rounded(x) for k, x in v.items()}
+        return round(v, 6) if isinstance(v, float) else v
+
+    params = {k: rounded(v) for k, v in p.items()}
+    meta = {"source": "kizami generate", "level": level, "kanji": kanji, **(meta_extra or {}), "params": params}
+    doc = TimingDocument(lines=tuple(doc_lines), kind="generated", meta=meta)
     timing = out / f"auto_{level}.json"
     labels = out / f"auto_labels_{level}.txt"
     save_document(doc, timing)

@@ -20,7 +20,39 @@ The song folder holds two files (or name them with `--vocals` and `--lyrics`):
 - `lyrics.txt`: UTF-8 text, one lyric line per line. Blank lines and section
   tags such as `[Chorus]` are skipped. When a word is sung differently from
   how it is written, give the reading in braces: `明日{あした}` or
-  `{明日|あした}`. The braces are not shown in the output.
+  `{明日|あした}`. The braces are not shown in the output. The long form
+  works in every language: `{24/7|twenty four seven}` is timed as one unit
+  and shown as `24/7`.
+
+## Languages
+
+Lyrics can be in Japanese, Korean, English and Spanish, in any mix, also
+inside one line (`Baby 사랑해`, `君のsmileが好き`). The script of each part
+decides its language:
+
+| Written in | Language | Smallest unit | A word is |
+|---|---|---|---|
+| kana, kanji | Japanese | a kana (or a kanji with its reading) | a word found by SudachiPy, with its particles |
+| Hangul | Korean | one syllable block (`사`, `랑`) | the text between spaces (`사랑을`) |
+| Latin letters | English or Spanish (`--latin`) | one syllable by the spelling rules (`beau`, `ti`, `ful`) | the text between spaces |
+
+Latin letters are English or Spanish for the whole song: `--latin auto` (the
+default) guesses from the words, `--latin en` or `--latin es` sets it. The
+guess counts Spanish accents and common words of each language, each different
+word once; fillers such as `oh`, `yeah` and `baby` count for neither. A song
+with both English and Spanish is not supported. A Spanish word that starts
+with a vowel after a word that ends with one (`mi amor`, sung `mia-mor`) does
+not start a chunk of its own unless its vowel has a strong attack.
+
+Japanese parts are timed by the Japanese model, all other parts by the letter
+model. A line with Japanese only gets the same chunks as before, and the same
+times, except one case: the first start of a line right after a line with
+Latin text can move, because it starts where the sound of the line before
+ends. Measured 2026-11-19 on the four Japanese test songs at the medium level:
+2 of 1,052 starts on Japanese-only lines moved, and both moved closer to the
+owner's times. The star token of the letter model (`mms_star`, see the
+measurements below) can also change where that second model points; on the
+same songs it changed the matched starts by one (+1).
 
 ## Models
 
@@ -29,8 +61,8 @@ environment variable `KIZAMI_MODEL_DIR` to it.
 
 | Folder | Needed | What it is |
 |---|---|---|
-| `w2v2-hiragana/` | yes | `vumichien/wav2vec2-large-xlsr-japanese-hiragana` from Hugging Face: `config.json`, `model.safetensors`, `preprocessor_config.json`, `special_tokens_map.json`, `tokenizer_config.json`, `vocab.json` (about 1.3 GB). |
-| `mms_fa/model.pt` | no | The torchaudio MMS_FA forced-alignment model from `https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt` (1,262,047,414 bytes). Check its licence before any commercial use. |
+| `w2v2-hiragana/` | for Japanese | `vumichien/wav2vec2-large-xlsr-japanese-hiragana` from Hugging Face: `config.json`, `model.safetensors`, `preprocessor_config.json`, `special_tokens_map.json`, `tokenizer_config.json`, `vocab.json` (about 1.3 GB). |
+| `mms_fa/model.pt` | for Korean, English and Spanish; optional for Japanese (a second opinion) | The torchaudio MMS_FA forced-alignment model from `https://dl.fbaipublicfiles.com/mms/torchaudio/ctc_alignment_mling_uroman/model.pt` (1,262,047,414 bytes). Check its licence before any commercial use. |
 
 One way to fetch the first model:
 
@@ -44,14 +76,81 @@ done
 
 The `ffmpeg` program must be installed to read the audio for the models.
 
+On Ubuntu, `scripts/setup-ubuntu.sh` does all of this: system packages, a
+virtual environment, and the models at pinned revisions with their sizes
+checked. `scripts/setup-ubuntu.sh --model-dir ~/kizami-models --dedicated`
+fetches all five models (6.4 GB); leave out `--dedicated` for the two needed
+models (2.6 GB). It can be run again at any time and skips what is in place.
+
+The models run on an NVIDIA GPU when torch sees one, else on the CPU
+(`--device auto`, the default; `--device cpu` or `--device cuda` to choose).
+Demucs, which separates the voice, also chooses a GPU by itself. The GPU
+rounds numbers differently, so its model outputs are not bit-for-bit the same
+as the CPU's, and a start could in principle move. On the 144 test songs
+(Japanese, English, Spanish and Korean) no start moved.
+
+Measured on one machine (NVIDIA RTX 4060 Ti 8 GB against the same machine's
+16-core CPU, first run without a cache, model loading included): an English or
+Spanish song took about 5 seconds on the GPU and about 50 seconds on the CPU,
+a Japanese song about 10 against 65 seconds, and a short Korean recording
+about 2 against 10 seconds. The GPU used at most 3 GB of its memory.
+
+### Dedicated models for English and Spanish (optional)
+
+A dedicated speech model per language can time an English or a Spanish song
+instead of the MMS letter model. Put its folder in the model folder and it is
+used; without the folder, the letter model times the song as before. On the
+public test songs they place about 70% fewer words more than 1 second away,
+and recall within 50 ms rises by about 4 points (see "Measured accuracy").
+
+By default only a song in that one language uses the model. In a song with
+several languages the letter model times every non-Japanese unit, because on
+the one mixed song with a reference (352 Japanese and 21 English units) the
+dedicated model was not better: first it moved the English words about 1.7 s
+early into the Japanese singing around them; aligned only between the
+neighbouring Japanese times (`w2v_margin` 0.3 s) it kept 6 of 6 English hits
+within 50 ms but moved three Japanese line starts after English lines, 3 hits
+fewer in all. `w2v_mixed` 1 turns it on for such songs, to measure them.
+
+The Korean model is supported but off by default (`w2v_ko` 0), because on
+the Korean test set it was not better and doubled the syllables more than
+1 second away. Set `w2v_en`, `w2v_es` or `w2v_ko` to 0 or 1 to choose, for
+example from Python or `python -m kizami.sweep`. A model folder that lacks one
+of its files is an error.
+
+| Folder | Model on Hugging Face (revision) | Licence | Output characters |
+|---|---|---|---|
+| `w2v2-en/` | `facebook/wav2vec2-large-960h-lv60-self` (`54074b1c`) | Apache-2.0 | `A` to `Z` and `'` |
+| `w2v2-es/` | `jonatasgrosman/wav2vec2-large-xlsr-53-spanish` (`96d7e9b4`) | Apache-2.0 | `a` to `z`, `á é í ñ ó ö ú ü`, `'` |
+| `w2v2-ko/` | `kresnik/wav2vec2-large-xlsr-korean` (`629c9a35`) | Apache-2.0 | 1,202 Hangul blocks |
+
+Each folder needs `config.json`, `vocab.json`, `preprocessor_config.json` and
+`model.safetensors` (about 1.3 GB each). Kizami reads only `model.safetensors`.
+The English and Spanish models are published only as `pytorch_model.bin`, so
+convert that file once. `weights_only=True` loads the tensors without running
+any code from the file:
+
+```python
+import torch
+from safetensors.torch import save_file
+
+sd = torch.load("pytorch_model.bin", map_location="cpu", weights_only=True)
+save_file({k: v.contiguous() for k, v in sd.items()}, "model.safetensors", metadata={"format": "pt"})
+```
+
+A Korean block that is not among the model's 1,202 blocks, and a digit, is
+aligned as "any sound" and still gets a time.
+
 ## Options
 
 | Option | Default | Meaning |
 |---|---|---|
 | `--level` | `chu` | `chu` (the timing to use). `dai`, `sho` or `all` write the other two levels too, for comparison. |
+| `--latin` | `auto` | Language of lyrics in Latin letters: `auto` (guessed from the words), `en` or `es`. |
 | `--kanji` | `auto` | `auto` keeps kanji as written in `lyrics.txt`. Only a run of kanji with a chunk start inside the reading of one of them is written in hiragana: with a start at the `が` of `願い`, the chunks are `ね` and `がい`; with a start inside `空`, `夜空` becomes `よぞら` (not `夜そら`). A start between `夜` and `空` keeps `夜空`. `hiragana` writes every kanji as its reading. `keep` writes them as in `lyrics.txt`; a chunk then never starts inside a kanji. `auto` and `hiragana` give the same chunk starts. |
 | `-o`, `--out-dir` | the song folder | Where the files are written. Existing files of the same name are replaced. |
 | `--mms` | `auto` | Second model: `auto` uses it if `mms_fa/model.pt` is there, `on` requires it, `off` skips it. |
+| `--device` | `auto` | Where the models run: `auto` takes an NVIDIA GPU when torch sees one, else the CPU; `cpu` or `cuda` to choose. |
 | `--cache` | none | Folder for the model outputs. A rerun on the same audio then takes a few seconds. |
 | `--anchor` | `prev-end` | Chunk start at the end of the previous sound (`prev-end`) or at the attack itself (`attack`). |
 
@@ -84,13 +183,16 @@ inside a chunk.
 
 ## How a chunk start is chosen
 
-1. **Units.** The lyrics are split into units with SudachiPy. A kanji gets
+1. **Units.** Japanese is split into units with SudachiPy. A kanji gets
    its reading from the dictionary; a compound whose reading cannot be split
-   per kanji (such as `今日`) stays one unit.
+   per kanji (such as `今日`) stays one unit. Korean, English and Spanish are
+   split as in [Languages](#languages).
 2. **Alignment.** A wav2vec2 model trained on hiragana finds where each kana
    is sung (CTC forced alignment). Where it is unsure and the optional MMS
    model points at a clearer attack more than 0.15 s away, the MMS time is
-   used.
+   used. Units in Korean, English and Spanish take their time from the MMS
+   letter model (Korean is written in the letters MMS learned it with), plus
+   a lag per language (`lag_en`, `lag_es`, `lag_ko`).
 3. **Attack.** The aligned time snaps to the strongest nearby vocal attack
    (spectral flux, 70 ms before to 50 ms after). A unit with no attack nearby
    keeps the aligned time and is marked uncertain. A line's first unit can
@@ -116,6 +218,8 @@ inside a chunk.
    A unit that starts 1 second or more after the unit before it in the same
    line (after a long note or a rest) also starts a chunk, with or without a
    strong attack (`gap` in the parameters; 0 turns it off).
+   The 45% line is set for each language on its own units, so a Japanese
+   line keeps its chunk starts in a song that also has English or Korean.
 
 The parameters are in `kizami.generate.place.DEFAULTS`.
 
@@ -149,6 +253,82 @@ the time.
 **The 1-second rule** (measured 2026-11-19) adds 7, 8, 1 and 0 chunk starts
 to songs 1 to 4; 4 of the 16 have no clear attack and are marked uncertain.
 Of the 9 that start on a character with a reference time, 6 are within 50 ms.
+
+**Korean, English and Spanish** (measured 2026-11-19). English and Spanish:
+JamendoLyrics MultiLang, 20 songs each, vocals separated with Demucs,
+`--level dai --anchor attack`, against the dataset's word starts. Korean: the
+Children's Song Dataset, 100 solo recordings of 50 children's songs,
+`--level sho --anchor attack`, against its note starts. Recall is the share of
+reference starts matched within 50 ms. The lags were tuned on these same
+songs (both halves of each set agreed), so the tuned numbers are optimistic.
+
+| | Starts | Before tuning (lag −0.02) | Letter model (tuned lag, star token, silence penalty) | Dedicated model (measured 2026-11-20) |
+|---|---|---|---|---|
+| English | 5,693 words | 53.6% (95% interval 52.4 to 54.9%) | 57.1% (`lag_en` −0.03) | **61.4%** (60.1 to 62.6%; `w2v_lag_en` −0.06), used by default |
+| Spanish | 5,269 words | 55.4% (54.0 to 56.7%) | 61.0% (`lag_es` 0.00) | **64.8%** (63.5 to 66.1%; `w2v_lag_es` −0.01), used by default |
+| Korean | 15,816 syllables | 55.6% (54.8 to 56.4%) | **63.0%** (`lag_ko` +0.01), used by default | 62.8% (`w2v_lag_ko` 0.00) |
+
+The intervals treat every word as independent; words of one song are not,
+so the true uncertainty is wider. The dedicated models won on both halves of
+each set (English +50 and +195 words, Spanish +129 and +72), so the gain is
+not one song's luck.
+
+Words more than 1 second away, letter model → dedicated model: English 540 →
+173, Spanish 323 → 87, Korean 137 → 294. Within 200 ms: English 86.3% →
+93.7%, Spanish 91.1% → 97.0%, Korean 94.0% → 87.7%. So the dedicated models
+mostly remove the large errors; the remaining misses are 50 to 200 ms off.
+For comparison, research systems trained on singing report on the 20-song
+English Jamendo test set a median word-start error of 41 to 44 ms and about
+94% within 200 ms (Cheng, Nakano and Goto, DAFx 2025 and ICMC 2026). They do
+not report the share within 50 ms; from the median it is a little over half
+(our estimate). Our English result (93.7% within 200 ms) is close to theirs,
+with the caveat that its lag was tuned on these songs.
+
+On the owner's MacBook Air the models take 12.5 s per English song, 13.5 s
+per Spanish song and 6.4 s per Korean recording, once per song with
+`--cache`.
+
+This is far below the 90% target. With the letter model, the misses were:
+
+- **English:** 9.5% of the words are placed more than 1 second away (whole
+  passages aligned to the wrong place, often onto singing that is not in the
+  lyrics); many more are 50 to 100 ms off.
+- **Spanish:** 782 words joined to the word before by sinalefa never start a
+  chunk at this level; without them, recall is 71.6%.
+- **Korean:** almost all syllables are close (99% within 1 s, 82% within
+  100 ms before tuning) but not within 50 ms. The dataset marks note starts,
+  which can fall later than where the syllable's first consonant starts.
+
+Two changes to the letter model's alignment helped. The star token
+(`mms_star`, on by default) lets it skip singing between lines that is not in
+the lyrics: +36 English words, +11 Spanish, no change for Korean, and +1
+start on the Japanese songs. The silence penalty (`mms_silence` 5) keeps the
+lyrics out of stretches where the vocal track is silent, which fixed passages
+placed into silent intros: +81 English words (words more than 1 s away fell
+from 772 to 540), +28 Spanish, no change for Korean, and +2 starts on the
+Japanese songs. The owner's own songs in each language are not measured yet.
+
+Turn a JamendoLyrics annotation into a reference with
+
+```
+kizami import-ref --format jamendo annotations/words/SONG.csv \
+  --words lyrics/SONG.words.txt --lyrics lyrics/SONG.txt -o ref.json
+```
+
+Its times mark the attack, so generate with `--anchor attack --level dai`
+before `kizami eval`. A Korean song of the Children's Song Dataset becomes a
+reference with one chunk per Hangul block (compare with `--level sho`):
+
+```
+kizami import-ref --format csd csv/kr001a.csv --lyrics lyric/kr001a.txt -o ref.json
+```
+ To try parameter values on songs whose model outputs
+are cached, without running the models again:
+
+```
+python -m kizami.sweep song1 song2 --model-dir models --cache cache \
+  --level dai --anchor attack --param lag_en=-0.06:0.02:0.01
+```
 
 ## From Python
 

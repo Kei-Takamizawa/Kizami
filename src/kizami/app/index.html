@@ -99,7 +99,15 @@ button.primary { background: var(--accent); color: #1a1200; border-color: var(--
     <section class="card">
       <h2><span class="step">2</span>Lyrics</h2>
       <textarea id="lyrics" spellcheck="false" placeholder="Paste the lyrics here, one lyric line per line."></textarea>
-      <p class="hint">Blank lines and section tags such as <code>[Chorus]</code> are skipped. When a word is sung differently from how it is written, give the reading in braces: <code>明日{あした}</code>.</p>
+      <p class="hint">Blank lines and section tags such as <code>[Chorus]</code> are skipped. When a word is sung differently from how it is written, give the reading in braces: <code>明日{あした}</code>. Japanese, Korean, English and Spanish can be mixed, also in one line.</p>
+      <div class="field">
+        <label for="latin">Words in Latin letters are</label>
+        <select id="latin">
+          <option value="auto" selected>Found from the words (English or Spanish)</option>
+          <option value="en">English</option>
+          <option value="es">Spanish</option>
+        </select>
+      </div>
     </section>
 
     <section class="card">
@@ -212,7 +220,7 @@ $('form').addEventListener('submit', async e => {
     const started = await (await api('/api/jobs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        upload: up.upload, lyrics, is_vocals: $('isVocals').checked, offset_ms: offsetMs(),
+        upload: up.upload, lyrics, is_vocals: $('isVocals').checked, offset_ms: offsetMs(), latin: $('latin').value,
         title: $('title').value, artist: $('artist').value,
       }),
     })).json();

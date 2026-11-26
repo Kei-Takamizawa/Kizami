@@ -29,11 +29,13 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 from xml.sax.saxutils import escape, quoteattr
 
+from kizami.generate.lang import guess_latin, script_of
 from kizami.timing import (
     FORMAT_NAME,
     Chunk,
@@ -171,7 +173,39 @@ def _chunk_ends(line: Line, next_line_start: int | None) -> list[int]:
     return ends
 
 
-def _words(line: Line, ends: list[int], chunk_spaces: bool) -> list[_Word]:
+def _knows_spaces(doc: TimingDocument) -> bool:
+    """The chunk texts carry the spaces between words (``kizami generate`` keeps them, and so does a
+    tagger file made from its output), so a missing space means the chunks are inside one word."""
+    if doc.meta.get("source") == "kizami generate":
+        return True
+    return any(c.text[:1].isspace() or c.text[-1:].isspace() for line in doc.lines for c in line.chunks)
+
+
+def _main_lang(doc: TimingDocument) -> str:
+    """The language with the most units in ``meta.languages``. Without it (a tagger project, an
+    older file), the script of most chunks: Hangul is ``ko``, Latin letters ``meta.latin`` or a
+    guess from the words, anything else ``ja``."""
+    counts = doc.meta.get("languages")
+    if isinstance(counts, dict) and counts:
+        best = max(counts.items(), key=lambda kv: (kv[1] if isinstance(kv[1], int) else 0, kv[0]))[0]
+        if isinstance(best, str) and best:
+            return best
+    scripts = Counter(
+        next((s for s in map(script_of, chunk.text) if s), "") for line in doc.lines for chunk in line.chunks
+    )
+    scripts.pop("", None)
+    if not scripts:
+        return "ja"
+    best = max(("ja", "ko", "latin"), key=lambda s: scripts[s])  # a tie goes to the first
+    if best == "latin":
+        latin = doc.meta.get("latin")
+        if latin in ("en", "es"):
+            return latin
+        return guess_latin(w for line in doc.lines for w in "".join(c.text for c in line.chunks).split())
+    return best
+
+
+def _words(line: Line, ends: list[int], chunk_spaces: bool, guess_spaces: bool = True) -> list[_Word]:
     chunks, words = line.chunks, []
     for i, (chunk, end) in enumerate(zip(chunks, ends)):
         if chunk.text[:1].isspace() and words:
@@ -180,7 +214,7 @@ def _words(line: Line, ends: list[int], chunk_spaces: bool) -> list[_Word]:
         if not text:
             continue
         word = _Word(text, chunk.start_ms, end, space=chunk.text[-1].isspace())
-        if i + 1 < len(chunks) and (chunk_spaces or _needs_space(chunk.text, chunks[i + 1].text)):
+        if i + 1 < len(chunks) and (chunk_spaces or (guess_spaces and _needs_space(chunk.text, chunks[i + 1].text))):
             word.space = True
         words.append(word)
     return words
@@ -208,13 +242,20 @@ def render_ttml(
     title: str | None = None,
     artists: Iterable[str] = (),
     album: str | None = None,
-    lang: str = "ja",
+    lang: str | None = None,
     chunk_spaces: bool = True,
 ) -> TtmlOutput:
     """The document as TTML, with counts. See the module docstring.
 
     ``chunk_spaces`` puts a space after every chunk but the last of a line.
+    Without it, a space comes only where the lyrics have one; for a hand-made
+    file without spaces, two Latin chunks that touch are taken to be two words.
+    ``lang`` (``xml:lang``) defaults to the language with the most units in
+    the document (``meta.languages``), else ``ja``.
     """
+    if lang is None:
+        lang = _main_lang(doc)
+    guess_spaces = not _knows_spaces(doc)
     if not isinstance(offset_ms, int) or isinstance(offset_ms, bool) or abs(offset_ms) > MAX_OFFSET_MS:
         raise TtmlError(f"the display offset must be a whole number of ms from -{MAX_OFFSET_MS} to {MAX_OFFSET_MS}")
     lines = [line for line in doc.lines if line.chunks]
@@ -230,7 +271,7 @@ def render_ttml(
     first_begin, last_end = None, 0
     for n, line in enumerate(lines):
         nxt = lines[n + 1].chunks[0].start_ms if n + 1 < len(lines) else None
-        words = _words(line, _chunk_ends(line, nxt), chunk_spaces)
+        words = _words(line, _chunk_ends(line, nxt), chunk_spaces, guess_spaces)
         _apply_offset(words, offset_ms)
         begin = min(w.begin for w in words)
         end = max(w.end for w in words)

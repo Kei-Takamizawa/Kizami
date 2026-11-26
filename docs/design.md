@@ -36,7 +36,9 @@ Existing automatic tools have two problems:
 
 **Non-goals (MVP)**
 
-- Korean. English and other space-separated text gets word-level timing only.
+- Languages other than Japanese, Korean, English and Spanish. (Korean,
+  English and Spanish were added on 2026-11-19; see
+  [the multilingual design](superpowers/specs/2026-11-19-multilang-design.md).)
 - Transcribing lyrics from audio.
 - Detecting which singer sings a line.
 - Fast rap and dense harmonies.

@@ -27,7 +27,10 @@ from kizami.generate.audio import SIBILANT, hiss_start
 
 DEFAULTS = {
     # aligned time to attack
-    "lag": -0.02,  # added to the aligned time before searching
+    "lag": -0.02,  # added to the aligned time before searching (Japanese)
+    "lag_en": -0.03,  # ... for English units (MMS time; JamendoLyrics, 2026-11-19)
+    "lag_es": 0.0,  # ... for Spanish units (MMS time; JamendoLyrics, 2026-11-19)
+    "lag_ko": 0.01,  # ... for Korean units (MMS time; Children's Song Dataset, 2026-11-19)
     "before": 0.07,  # search window before the aligned time (s)
     "after": 0.05,  # ... and after it
     "tau": 0.05,  # closeness weight: strength * exp(-distance / tau)
@@ -51,11 +54,57 @@ DEFAULTS = {
     "mms_tc": 0.02,  # ... the kana model's confidence is below this
     "mms_tm": 0.02,  # ... the MMS confidence is at least this
     "mms_k": 1.0,  # ... and MMS points at an attack at least this clear
+    "mms_star": 1.0,  # 1: a star token before every line lets MMS skip singing not in the lyrics
+    "mms_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
+    # dedicated per-language models (folders w2v2-en, w2v2-es, w2v2-ko; see generate/dedicated.py)
+    # 1: units of that language take their times from its model when the folder is there, not from MMS.
+    # JamendoLyrics (2026-11-20): English 57.1% -> 61.4% within 50 ms, Spanish 61.0% -> 64.8%;
+    # CSD Korean 63.0% -> 62.8% with twice the errors over 1 s, so Korean stays on MMS.
+    "w2v_en": 1.0,
+    "w2v_es": 1.0,
+    "w2v_ko": 0.0,
+    "w2v_lag_en": -0.06,  # lag for units timed by a dedicated model (instead of lag_<lang>)
+    "w2v_lag_es": -0.01,
+    "w2v_lag_ko": 0.0,
+    "w2v_mixed": 0.0,  # 1: also in songs with several languages (song4, 2026-11-20: not better than MMS there)
+    "w2v_margin": 0.3,  # a run of one language is aligned only between the other languages' times, this much wider (s)
+    "w2v_star": 1.0,  # 1: a star token before every line (as mms_star)
+    "w2v_silence": 5.0,  # letters this much less likely (log) where the vocals are silent; 0 = off
     # level chu
     "m_share": 0.45,  # share of the in-word attacks (strongest first) added to level dai
     "gap": 1.0,  # a unit this long (s) or more after the one before it in its line also starts a chunk
 }
 LEVELS = ("dai", "chu", "sho")
+
+
+# Letters that begin with a hiss, per language (Japanese uses the kana, audio.SIBILANT).
+SIBILANT_LETTERS = {
+    "en": ("s", "sh", "ch", "z", "ts", "ce", "ci", "cy"),
+    "es": ("s", "z", "ce", "ci", "ch", "x"),
+    "ko": ("s", "j", "c"),  # ㅅ ㅆ ㅈ ㅉ ㅊ in uroman letters
+}
+
+
+def lang_of(a) -> str:
+    return a.get("lang", "ja")
+
+
+def lag_for(a, p) -> float:
+    """The lag added to a unit's aligned time: ``lag`` for Japanese, ``lag_<lang>`` for the others,
+    and ``w2v_lag_<lang>`` for a unit timed by a dedicated model."""
+    lang = lang_of(a)
+    if lang == "ja":
+        return p["lag"]
+    if a.get("src") == "w2v" and f"w2v_lag_{lang}" in p:
+        return p[f"w2v_lag_{lang}"]
+    return p.get(f"lag_{lang}", p["lag"])
+
+
+def is_sibilant(a) -> bool:
+    """The unit starts with a hiss (さ, s, sh, ㅅ ...), so its start can move back to where the hiss begins."""
+    if lang_of(a) == "ja":
+        return bool(a["kana"]) and a["kana"][0] in SIBILANT
+    return a.get("letters", "").startswith(SIBILANT_LETTERS.get(lang_of(a), ()))
 
 
 def attack_start(env, c, v, new_peak, p):
@@ -121,7 +170,9 @@ def fused_rough(atoms, p, onsets, strengths):
     is used (shifted by the median offset between the two aligners).
     """
     out = [(a["rough"], a["rough_last"]) for a in atoms]
-    both = [i for i, a in enumerate(atoms) if a["rough"] is not None and a.get("mms") is not None]
+    both = [
+        i for i, a in enumerate(atoms) if lang_of(a) == "ja" and a["rough"] is not None and a.get("mms") is not None
+    ]  # other languages already take the MMS time (align.adopt_mms)
     if not both or p["mms_dis"] <= 0:
         return out, 0
     off = float(np.median([atoms[i]["rough"] - atoms[i]["mms"] for i in both]))
@@ -159,7 +210,8 @@ def place(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
         if r is None:
             continue
         a["shift"] = r - a["rough"]  # nonzero where the second aligner's time is used
-        c = r + p["lag"]
+        lag = lag_for(a, p)
+        c = r + lag
         lo, hi = c - p["before"], c + p["after"]
         while oi < len(onsets) and onsets[oi] < lo - 1.0:
             oi += 1
@@ -181,7 +233,7 @@ def place(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
             k = orphan_onset(onsets, strengths, env, tt, t, max(last_t + p["min_gap"], last_kana + 0.03), p)
             if k is not None:
                 t, a["strength"], a["snapped"], a["why"] = float(onsets[k]), float(strengths[k]), True, "orphan+"
-        if a["kana"] and a["kana"][0] in SIBILANT:
+        if is_sibilant(a):
             h = hiss_start(hiss, fps, t, last_t + p["min_gap"])
             if h is not None and h < t:
                 t = h
@@ -193,7 +245,7 @@ def place(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
         else:
             a["time"] = t
         last_t, last_b = t, a["time"]
-        last_kana = r_last + p["lag"] if len(a["kana"]) > 1 else -1.0
+        last_kana = r_last + lag if len(a["kana"]) > 1 else -1.0
     return n_mms
 
 
@@ -225,6 +277,10 @@ def place_morae(atoms, onsets, strengths, p, hiss, fps, env=None, tt=None):
     onsets, strengths = np.asarray(onsets), np.asarray(strengths)
     timed = [a for a in atoms if a.get("time") is not None]
     for n, a in enumerate(timed):
+        if lang_of(a) != "ja":  # one syllable: no inner starts
+            a["morae"] = [(a.get("syllable", "*"), a["time"], a["snapped"])]
+            a["mora_strengths"] = [a["strength"]]
+            continue
         groups = mora_groups(a["kana"])
         a["morae"] = [(groups[0][0], a["time"], a["snapped"])] if groups else []
         a["mora_strengths"] = [a["strength"]] if groups else []
@@ -276,10 +332,17 @@ def chu_threshold(atoms, share) -> float:
     return float(np.quantile(extra, 1 - share)) if extra else 0.0
 
 
+def chu_thresholds(atoms, share) -> dict[str, float]:
+    """``chu_threshold`` for each language on its own units, so that the share means the same in each."""
+    langs = sorted({lang_of(a) for a in atoms})
+    return {lang: chu_threshold([a for a in atoms if lang_of(a) == lang], share) for lang in langs}
+
+
 def select(atoms, level, m_thr, gap=None):
     """The units that start a chunk at ``level``.
 
-    At level chu, with ``gap``, a unit that starts ``gap`` seconds or more
+    ``m_thr`` is the chu line: one number, or one per language
+    (``chu_thresholds``). At level chu, with ``gap``, a unit that starts ``gap`` seconds or more
     after the unit before it in the same line (a long note or a rest) also
     starts a chunk.
     """
@@ -290,7 +353,8 @@ def select(atoms, level, m_thr, gap=None):
         if level == "dai":
             keep = is_word_start(a)
         elif level == "chu":
-            keep = is_word_start(a) or (a["snapped"] and a["strength"] >= m_thr)
+            thr = m_thr.get(lang_of(a), 0.0) if isinstance(m_thr, dict) else m_thr
+            keep = is_word_start(a) or (a["snapped"] and a["strength"] >= thr)
             after_gap = gap is not None and prev is not None and prev["line"] == a["line"]
             keep = keep or (after_gap and a["time"] - prev["time"] >= gap - 1e-9)
         else:

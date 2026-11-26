@@ -100,6 +100,9 @@ the voice, and after a pause or long note of one second or more. See
   between two characters: with a chunk start at the `が` of `願い`, the line
   shows `ね` `がい`. A start between two kanji (`夜` and `空` of `夜空`) keeps
   them. See [Generating timing](generate.md#options).
+- **Words in Latin letters are** English or Spanish. The default finds it
+  from the words; choose one when the guess is wrong. A song with both is not
+  supported.
 - **Space after each chunk** (on by default) puts a space between the chunks
   of a line, so you can see where each one starts. Spaces written in the
   lyrics always stay.

@@ -11,6 +11,7 @@ from kizami.generate.audio import envelope, hiss_start  # noqa: E402
 from kizami.generate.place import (  # noqa: E402
     DEFAULTS,
     chu_threshold,
+    chu_thresholds,
     chunks_for,
     fused_rough,
     mora_groups,
@@ -81,9 +82,132 @@ def _units(display, tmp_path=None):
     else:
         (tmp_path / "lyrics.txt").write_text(display + "\n", encoding="utf-8")
         lines = parse_lyrics(tmp_path / "lyrics.txt")
-    atoms, kept_whole = atoms_for(lines, _vocab())
+    atoms, kept_whole, *_ = atoms_for(lines, _vocab())
     shown = lines[0]["display"]
     return [(shown[a["offset"] : a["end"]], "".join(a["kana"])) for a in atoms], atoms, kept_whole
+
+
+def _atoms(*texts, latin="auto"):
+    """Units of several lines (no readings), the Latin language used, and the lines."""
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from kizami.generate.text import atoms_for
+
+    lines = [{"display": t, "sung": t, "spans": []} for t in texts]
+    atoms, _, used = atoms_for(lines, _vocab(), latin=latin)
+    return atoms, used, lines
+
+
+def _shown(atoms, lines):
+    return [lines[a["line"]]["display"][a["offset"] : a["end"]] for a in atoms]
+
+
+GOLDEN_KEYS = ("line", "offset", "end", "kana", "hiragana", "word_start", "dependent", "line_first")
+
+
+def test_japanese_units_match_the_golden_file(tmp_path):
+    """Units of Japanese-only lines are exactly what the Japanese-only code gave (tests/data)."""
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from pathlib import Path
+
+    from kizami.generate.text import atoms_for
+
+    golden = json.loads((Path(__file__).parent / "data" / "ja_units_golden.json").read_text(encoding="utf-8"))
+    (tmp_path / "lyrics.txt").write_text("\n".join(golden["lines"]) + "\n", encoding="utf-8")
+    atoms, kept, _ = atoms_for(parse_lyrics(tmp_path / "lyrics.txt"), _vocab())
+    assert kept == golden["kept_whole"]
+    assert [[a[k] for k in GOLDEN_KEYS] for a in atoms] == golden["units"]
+
+
+def test_japanese_line_is_the_same_next_to_other_languages():
+    alone, _, _ = _atoms("夜空に星が光る")
+    mixed, _, _ = _atoms("夜空に星が光る", "I love you baby", "사랑해 너를")
+    keys = ("offset", "end", "kana", "hiragana", "word_start", "dependent", "line_first")
+    assert [[a[k] for k in keys] for a in mixed if a["line"] == 0] == [[a[k] for k in keys] for a in alone]
+
+
+def test_korean_units_are_blocks_and_words_start_after_spaces():
+    atoms, _, lines = _atoms("사랑해 너를")
+    assert _shown(atoms, lines) == ["사", "랑", "해", "너", "를"]
+    assert [a["syllable"] for a in atoms] == ["사", "랑", "해", "너", "를"]
+    assert [a["word_start"] for a in atoms] == [True, False, False, True, False]
+    assert [a["letters"] for a in atoms] == ["sa", "rang", "hae", "neo", "reul"]
+    assert {a["lang"] for a in atoms} == {"ko"}
+    assert all(a["kana"] == ["*"] and a["hiragana"] is None and not a["dependent"] for a in atoms)
+    assert [a["line_first"] for a in atoms] == [True, False, False, False, False]
+
+
+def test_english_units_are_syllables():
+    atoms, used, lines = _atoms("beautiful baby")
+    assert used == "en"
+    assert _shown(atoms, lines) == ["beau", "ti", "ful", "ba", "by"]
+    assert [a["word_start"] for a in atoms] == [True, False, False, True, False]
+    assert [a["letters"] for a in atoms] == ["beau", "ti", "ful", "ba", "by"]
+
+
+def test_spanish_sinalefa_joins_the_next_word():
+    atoms, used, lines = _atoms("mi amor")
+    assert used == "es"
+    assert _shown(atoms, lines) == ["mi", "a", "mor"]
+    assert [a["word_start"] for a in atoms] == [True, False, False]
+    assert {a["lang"] for a in atoms} == {"es"}
+
+
+def test_no_sinalefa_in_english():
+    atoms, _, _ = _atoms("my eyes", latin="en")
+    assert [a["word_start"] for a in atoms] == [True, True]
+
+
+def test_mixed_line_without_spaces():
+    atoms, _, lines = _atoms("Baby사랑해")
+    assert _shown(atoms, lines) == ["Ba", "by", "사", "랑", "해"]
+    assert [a["word_start"] for a in atoms] == [True, False, True, False, False]
+    assert [a["lang"] for a in atoms] == ["en", "en", "ko", "ko", "ko"]
+
+
+def test_english_word_inside_a_japanese_line():
+    atoms, _, lines = _atoms("君のsmileが好き")
+    shown = _shown(atoms, lines)
+    assert "smile" in shown
+    smile = atoms[shown.index("smile")]
+    assert smile["lang"] == "en" and smile["word_start"] and smile["letters"] == "smile"
+    assert [a["lang"] for a in atoms if a["lang"] == "ja"] and atoms[0]["line_first"]
+
+
+def test_latin_guess_is_returned():
+    assert _atoms("te quiero mi amor")[1] == "es"
+    assert _atoms("te quiero mi amor", latin="en")[1] == "en"
+    assert {a["lang"] for a in _atoms("te quiero", latin="en")[0]} == {"en"}
+
+
+def test_japanese_units_carry_romaji_letters():
+    from kizami.generate.letters import romaji
+
+    atoms, _, _ = _atoms("青空を駆ける")
+    assert all(a["lang"] == "ja" and a["letters"] == romaji(a["kana"]) for a in atoms)
+
+
+def test_apostrophes_and_hyphens_stay_inside_a_word():
+    atoms, _, lines = _atoms("don't stop 'cause rock-n-roll", latin="en")
+    assert _shown(atoms, lines) == ["don't", "stop", "'cause", "rock-", "n-", "roll"]
+    assert [a["word_start"] for a in atoms] == [True, True, True, True, False, False]
+    assert atoms[0]["letters"] == "don't" and atoms[2]["letters"] == "cause"
+
+
+def test_a_word_without_vowels_is_one_unit():
+    atoms, _, lines = _atoms("hmm shh", latin="en")
+    assert _shown(atoms, lines) == ["hmm", "shh"]
+    assert [a["letters"] for a in atoms] == ["hmm", "shh"]
+
+
+def test_uppercase_accented_and_full_width_letters():
+    atoms, _, lines = _atoms("CORAZÓN", latin="es")
+    assert _shown(atoms, lines) == ["CO", "RA", "ZÓN"]
+    assert [a["letters"] for a in atoms] == ["co", "ra", "zon"]
+    atoms, _, lines = _atoms("ＬＯＶＥ", latin="en")
+    assert _shown(atoms, lines) == ["ＬＯＶＥ"]
+    assert [a["letters"] for a in atoms] == ["love"]
 
 
 def test_kanji_compound_is_split_per_kanji_with_its_reading():
@@ -576,3 +700,252 @@ def test_cli_generate_writes_medium_with_kanji_auto_by_default():
     args = _build_parser().parse_args(["generate", "song"])
 
     assert (args.level, args.kanji, args.anchor) == ("chu", "auto", "prev-end")
+
+
+def test_a_given_reading_in_english_is_one_unit_with_the_sung_letters(tmp_path):
+    pytest.importorskip("sudachipy")
+    pytest.importorskip("sudachidict_core")
+    from kizami.generate.text import atoms_for
+
+    (tmp_path / "lyrics.txt").write_text("call me {24/7|twenty four seven} baby\n", encoding="utf-8")
+    lines = parse_lyrics(tmp_path / "lyrics.txt")
+    atoms, _, used = atoms_for(lines, _vocab(), latin="en")
+    shown = [lines[0]["display"][a["offset"] : a["end"]] for a in atoms]
+    assert shown == ["call", "me", "24/7", "ba", "by"]
+    assert atoms[2]["letters"] == "twentyfourseven" and atoms[2]["word_start"]
+
+
+def _lang_atom(rough, lang, letters, **flags):
+    a = _atom(rough, "*" if lang != "ja" else flags.pop("kana", "か"), **flags)
+    a.update(lang=lang, letters=letters, syllable=letters)
+    return a
+
+
+def test_mms_letters_come_from_the_units():
+    from kizami.generate.align import mms_tokens
+
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "ko", "sa"), _lang_atom(3.0, "en", "don't")]
+    letters, owner = mms_tokens(atoms)
+    assert "".join(letters) == "kasadon't"
+    assert owner == [0, 0, 1, 1, 2, 2, 2, 2, 2]
+
+
+def test_star_tokens_open_every_line_and_close_the_song():
+    from kizami.generate.align import mms_tokens
+
+    atoms = [_lang_atom(1.0, "en", "hi"), _lang_atom(2.0, "en", "yo"), _lang_atom(3.0, "en", "ok")]
+    atoms[2]["line"] = 1
+    letters, owner = mms_tokens(atoms, star=True)
+    assert "".join(letters) == "*hiyo*ok*"
+    assert owner == [-1, 0, 0, 1, 1, -1, 2, 2, -1]
+    assert mms_tokens(atoms)[0] == list("hiyook")
+
+
+def test_units_without_letters_fall_back_to_romaji():
+    from kizami.generate.align import mms_tokens
+
+    letters, owner = mms_tokens([_atom(1.0, "か")])  # a unit from before units had letters
+    assert letters == ["k", "a"] and owner == [0, 0]
+
+
+def test_non_japanese_units_take_the_mms_time():
+    from kizami.generate.align import adopt_mms
+
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(9.0, "en", "love"), _lang_atom(None, "ko", "sa")]
+    for a, (m, last) in zip(atoms, ((1.1, 1.1), (2.0, 2.1), (3.0, 3.2))):
+        a.update(mms=m, mms_last=last, mms_conf=0.4)
+    assert adopt_mms(atoms) == 2
+    assert atoms[0]["rough"] == 1.0  # Japanese keeps the kana model's time
+    assert (atoms[1]["rough"], atoms[1]["rough_last"], atoms[1]["conf"]) == (2.0, 2.1, 0.4)
+    assert atoms[2]["rough"] == 3.0 and atoms[2]["kana_starts"] == [3.0]
+
+
+def test_fusion_offset_uses_japanese_units_only():
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "ja", "ka"), _lang_atom(3.5, "ja", "ka")]
+    for a, m in zip(atoms, (1.0, 2.0, 3.0)):
+        a["mms"], a["mms_conf"] = m, 0.3
+    others = [_lang_atom(t, "en", "la") for t in (5.0, 6.0, 7.0, 8.0)]
+    for a in others:
+        a["mms"], a["mms_conf"] = a["rough"] - 0.5, 0.3  # would move the median offset if counted
+    onsets, strengths = np.array([0.98, 1.98, 2.98]), np.array([4.0, 4.0, 4.0])
+    atoms[2]["conf"] = 0.001
+    out, n = fused_rough(atoms + others, DEFAULTS, onsets, strengths)
+    assert n == 1 and out[2] == (3.0, 3.0)
+    assert out[3:] == [(a["rough"], a["rough_last"]) for a in others]
+
+
+def test_lag_is_read_per_language():
+    atoms = [_lang_atom(1.0, "ja", "ka"), _lang_atom(2.0, "en", "la")]
+    onsets, strengths = [0.95, 1.95], [5.0, 5.0]
+    p = dict(DEFAULTS, lag=0.0, lag_en=-0.05, before=0.01, after=0.01)
+    place(atoms, onsets, strengths, p, np.zeros(1000, bool), 200.0)
+    assert not atoms[0]["snapped"]  # 50 ms away from the Japanese search centre
+    assert atoms[1]["snapped"] and atoms[1]["time"] == pytest.approx(1.95)
+
+
+def test_threshold_per_language_keeps_japanese():
+    ja = [dict(_lang_atom(1.0, "ja", "ka", word_start=False), snapped=True, strength=float(s)) for s in range(1, 11)]
+    en = [dict(_lang_atom(1.0, "en", "la", word_start=False), snapped=True, strength=100.0) for _ in range(10)]
+    t = chu_thresholds(ja + en, 0.45)
+    assert t["ja"] == pytest.approx(chu_threshold(ja, 0.45))
+    assert t["en"] == pytest.approx(100.0)
+
+
+def test_select_uses_the_unit_language_threshold():
+    lines, atoms = _timed("ab", [(0, 1.0, True, 5.0, True, False), (1, 2.0, True, 5.0, False, False)])
+    atoms[1]["lang"] = "en"
+    assert len(select(atoms, "chu", {"ja": 1.0, "en": 9.0})) == 1
+    assert len(select(atoms, "chu", {"ja": 9.0, "en": 1.0})) == 2
+    assert len(select(atoms, "chu", 1.0)) == 2  # one number still works
+
+
+def test_non_japanese_units_list_their_syllable_as_one_mora():
+    atoms = [_lang_atom(1.0, "en", "beau")]
+    atoms[0]["syllable"] = "beau"
+    place(atoms, [0.98], [5.0], dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+    place_morae(atoms, [0.98], [5.0], dict(DEFAULTS), np.zeros(1000, bool), 200.0)
+    assert atoms[0]["morae"] == [("beau", atoms[0]["time"], True)]
+
+
+@pytest.mark.parametrize("lang, letters", [("en", "so"), ("es", "si"), ("ko", "sa"), ("en", "shy"), ("es", "cielo"), ("ko", "jo")])
+def test_sibilant_from_letters(lang, letters):
+    from kizami.generate.place import is_sibilant
+
+    assert is_sibilant(_lang_atom(1.0, lang, letters))
+
+
+@pytest.mark.parametrize("lang, letters", [("en", "love"), ("es", "casa"), ("ko", "na"), ("en", "jump")])
+def test_not_sibilant_from_letters(lang, letters):
+    from kizami.generate.place import is_sibilant
+
+    assert not is_sibilant(_lang_atom(1.0, lang, letters))
+
+
+def _with_kana_model(tmp_path):
+    model = tmp_path / "w2v2-hiragana"
+    model.mkdir()
+    (model / "vocab.json").write_text(json.dumps(_vocab()), encoding="utf-8")
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    (model / "model.safetensors").write_bytes(b"")
+
+
+def test_latin_must_be_auto_english_or_spanish(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("あ\n", encoding="utf-8")
+    with pytest.raises(GenerateError, match="latin"):
+        generate(tmp_path, model_dir=tmp_path, latin="fr")
+
+
+def test_a_korean_song_needs_the_letter_model_and_not_the_kana_model(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("사랑해\n", encoding="utf-8")
+    with pytest.raises(GenerateError, match="mms_fa/model.pt") as err:
+        generate(tmp_path, model_dir=tmp_path)
+    assert "kana model" not in str(err.value)
+
+
+def test_the_letter_model_cannot_be_turned_off_for_other_languages(tmp_path):
+    (tmp_path / "vocals.wav").write_bytes(b"")
+    (tmp_path / "lyrics.txt").write_text("あ\nI love you\n", encoding="utf-8")
+    _with_kana_model(tmp_path)
+    with pytest.raises(GenerateError, match="letter model"):
+        generate(tmp_path, model_dir=tmp_path, mms="off")
+
+
+def test_languages_and_latin_are_written_to_the_timing_file(tmp_path):
+    from kizami.generate import _write_level
+    from kizami.timing import load_document
+
+    lines, atoms = _timed("ab", [(0, 1.0, True, 5.0, True, False)])
+    _write_level(tmp_path, "chu", lines, atoms, dict(DEFAULTS), meta_extra={"languages": {"ko": 3, "en": 1}, "latin": "en"})
+    meta = load_document(tmp_path / "auto_chu.json").meta
+    assert meta["languages"] == {"ko": 3, "en": 1} and meta["latin"] == "en"
+
+
+def test_cli_generate_takes_the_latin_language():
+    from kizami.cli import _build_parser
+
+    assert _build_parser().parse_args(["generate", "song"]).latin == "auto"
+    assert _build_parser().parse_args(["generate", "song", "--latin", "es"]).latin == "es"
+    with pytest.raises(SystemExit):
+        _build_parser().parse_args(["generate", "song", "--latin", "fr"])
+
+
+def test_a_line_without_letters_in_a_song_without_japanese_is_not_japanese():
+    atoms, _, lines = _atoms("사랑해 너를", "3, 2, 1", "사랑해")
+    count_in = [a for a in atoms if a["line"] == 1]
+    assert _shown(count_in, lines) == ["3", "2", "1"]
+    assert {a["lang"] for a in atoms} == {"ko"}
+    assert [a["letters"] for a in count_in] == ["*", "*", "*"]
+    assert [a["word_start"] for a in count_in] == [True, True, True]
+    assert [a["line_first"] for a in count_in] == [True, False, False]
+
+
+def test_a_line_without_letters_takes_the_main_language_of_the_song():
+    atoms, used, _ = _atoms("I love you baby", "5, 6, 7, 8", "사랑해")
+    assert used == "en"
+    assert {a["lang"] for a in atoms if a["line"] == 1} == {"en"}
+
+
+def test_a_line_without_letters_in_a_japanese_song_stays_japanese():
+    atoms, _, _ = _atoms("夜空に星が光る", "3, 2, 1")
+    assert {a["lang"] for a in atoms if a["line"] == 1} == {"ja"}
+
+
+def test_a_leading_apostrophe_belongs_to_its_word_and_is_not_a_letter():
+    atoms, _, lines = _atoms("사랑해 'cause I love you", "I want you 'cause", "'til the end", latin="en")
+    shown = _shown(atoms, lines)
+    starts = [a for a, s in zip(atoms, shown) if s in ("'cause", "'til")]
+    assert [s for s in shown if "'" in s] == ["'cause", "'cause", "'til"]
+    assert [a["letters"] for a in starts] == ["cause", "cause", "til"]
+    assert all(a["word_start"] for a in starts)
+    assert [a["letters"] for a in _atoms("don't", latin="en")[0]] == ["don't"]
+
+
+def _tone_in_silence(level=0.3, floor=0.0):
+    sr = 16000
+    rng = np.random.default_rng(0)
+    x = floor * rng.standard_normal(3 * sr)
+    t = np.arange(sr) / sr
+    x[sr : 2 * sr] = level * np.sin(2 * np.pi * 220 * t)
+    return x.astype(np.float32)
+
+
+def test_voiced_frames_mark_singing_and_a_margin_around_it():
+    from kizami.generate.align import voiced_frames
+
+    voiced = voiced_frames(_tone_in_silence(), 150, pad=3)
+    assert voiced.dtype == bool and len(voiced) == 150
+    assert not voiced[:47].any() and voiced[47:103].all() and not voiced[103:].any()
+
+
+def test_voiced_frames_ignore_a_low_noise_floor():
+    from kizami.generate.align import voiced_frames
+
+    voiced = voiced_frames(_tone_in_silence(floor=0.002), 150, pad=0)
+    assert voiced[50:100].all() and not voiced[:50].any() and not voiced[100:].any()
+
+
+def test_silence_penalty_lowers_only_letters_outside_singing():
+    from kizami.generate.align import mask_silence
+
+    em = np.zeros((4, 5), dtype=np.float32)
+    voiced = np.array([True, False, True, False])
+    out = mask_silence(em, voiced, 8.0)
+    assert (out[[0, 2]] == 0).all()  # sung frames unchanged
+    assert (out[[1, 3], 1:4] == -8.0).all()  # letters in silence
+    assert (out[:, 0] == 0).all() and (out[:, 4] == 0).all()  # blank and star stay
+    assert (em == 0).all()  # the input is not changed
+    assert mask_silence(em, voiced, 0.0) is em
+
+
+def test_digits_in_a_line_of_another_language_get_their_own_unit():
+    atoms, _, lines = _atoms("I have 2 dreams", "사랑해 1 2 3", "君と 2 people", latin="en")
+    shown = _shown(atoms, lines)
+    digits = [(lines[a["line"]]["display"][a["offset"] : a["end"]], a["lang"]) for a in atoms if a["letters"] == "*"]
+    assert digits == [("2", "en"), ("1", "ko"), ("2", "ko"), ("3", "ko"), ("2", "en")]
+    assert shown[:4] == ["I", "have", "2", "dreams"]
+    assert all(a["word_start"] for a in atoms if a["letters"] == "*")
+    for li in range(3):
+        firsts = [a["line_first"] for a in atoms if a["line"] == li]
+        assert firsts[0] and not any(firsts[1:])

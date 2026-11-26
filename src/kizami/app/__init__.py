@@ -239,6 +239,9 @@ class App:
         lyrics = request.get("lyrics")
         if not isinstance(lyrics, str) or not lyrics.strip():
             raise AppError("paste the lyrics first")
+        latin = request.get("latin", "auto")
+        if latin not in ("auto", "en", "es"):
+            raise AppError('the Latin language must be "auto", "en" or "es"')
         offset = request.get("offset_ms", 0)
         if not isinstance(offset, int) or isinstance(offset, bool) or abs(offset) > MAX_OFFSET_MS:
             raise AppError(f"the display offset must be a whole number from -{MAX_OFFSET_MS} to {MAX_OFFSET_MS} ms")
@@ -255,7 +258,7 @@ class App:
             job.offset_ms = offset
             self.jobs[job.id] = job
             self.latest = job.id
-        options = {"lyrics": lyrics, "is_vocals": bool(request.get("is_vocals"))}
+        options = {"lyrics": lyrics, "is_vocals": bool(request.get("is_vocals")), "latin": latin}
         thread = threading.Thread(target=self._run, args=(job, upload, options), daemon=True)
         thread.start()
         return job
@@ -394,7 +397,9 @@ def run_pipeline(job: Job, upload: Upload, options: dict, app: App) -> None:
         job.step = message
 
     try:
-        result = generate(folder, model_dir=app.model_dir, cache=app.work_dir / "_cache", progress=said)
+        result = generate(
+            folder, model_dir=app.model_dir, cache=app.work_dir / "_cache", progress=said, latin=options.get("latin", "auto")
+        )
     except GenerateError as exc:
         raise AppError(str(exc)) from exc
     level = result.levels[0]
